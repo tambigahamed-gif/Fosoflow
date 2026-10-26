@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "FasoFlow — Le marché près de vous",
+  "short_name": "FasoFlow",
+  "description": "Marketplace locale pour les clients, commerçants et livreurs au Burkina Faso.",
+  "lang": "fr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F8F5EC",
+  "theme_color": "#155B46",
+  "icons": [
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

@@ -45,7 +45,7 @@ Créer dans ce dépôt `fasoflow/` une marketplace SaaS réelle en français, de
 
 **Voix :** directe, respectueuse et concrète ; CTA descriptifs. Exemples : « Les trouvailles du quartier, réunies au même endroit. » et « Votre boutique est prête à prendre sa place. »
 
-**Logo :** dessin SVG original, symbole de flux croisés évoquant à la fois une route de livraison et un panier, accompagné d’un wordmark FasoFlow personnalisé ; favicon dérivé du symbole, sans mot complet en petite taille.
+**Logo :** utiliser le logo officiel FasoFlow fourni par l’utilisateur, avec le symbole et le wordmark accompagnés de la signature « Achète. Vends. Ça circule. ». Conserver le PNG original fourni, ses recadrages dédiés au symbole et au wordmark pour une composition nette et accessible dans l’interface, puis dériver les icônes PWA et le favicon du symbole sans texte en petite taille. Ne pas substituer l’identité par un dessin générique.
 
 **Couleur propriétaire :** vert FasoFlow profond `#155B46`, accompagné d’ivoire `#F8F5EC`, terre cuite `#C9503B`, safran `#E0AE3C` et encre `#202721`.
 

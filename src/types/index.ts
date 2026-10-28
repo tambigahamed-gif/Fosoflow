@@ -9,6 +9,7 @@ export interface Profile {
   avatar_url: string | null;
   is_available?: boolean;
   delivery_zone?: string | null;
+  preferred_delivery_zone?: string | null;
   created_at: string;
 }
 

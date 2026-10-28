@@ -4,7 +4,7 @@ Marketplace SaaS en français destinée au Burkina Faso : clients, commerçants 
 
 ## État et limites importantes
 
-Le dépôt contient l’application et les migrations, mais aucune base Supabase, compte marchand SasPay, webhook, compte Vercel ou secrets n’a été connecté depuis cet environnement. Les annonces de démonstration sont étiquetées et ne peuvent pas être achetées ; aucune donnée ou paiement fictif n’est présenté comme réel. Les CGU/confidentialité demeurent à compléter par l’exploitant (raison sociale, coordonnées, conservation et droits).
+Les clés du projet Supabase ont été configurées et vérifiées par des requêtes de diagnostic en lecture seule : Auth répond, mais le schéma FasoFlow n’est pas encore visible et aucune migration ni écriture n’a été exécutée. Aucun connecteur d’administration Supabase n’est actif ; l’application de schéma doit donc se faire par le SQL Editor, sans `SUPABASE_DB_URL` (voir [`supabase/README_MIGRATIONS.md`](supabase/README_MIGRATIONS.md)). Aucun compte marchand SasPay ni déploiement Vercel n’est connecté. Les annonces de démonstration sont étiquetées et ne peuvent pas être achetées ; aucune donnée ou paiement fictif n’est présenté comme réel. Les CGU/confidentialité demeurent à compléter par l’exploitant (raison sociale, coordonnées, conservation et droits).
 
 L’intégration du prestataire est **SasPay** (saspay.me), pas SasaPay. L’API checkout et son statut serveur sont implémentés dans `/api/payments`. Une session de paiement ne suffit pas à valider un règlement : l’activation se fait seulement si l’API officielle confirme `PAID` et `SUCCESS`. Les docs indiquent actuellement que le retour `return_url` n’est pas pris en charge : la session est conservée sur l’appareil et l’utilisateur peut revenir dans son espace abonnement pour appuyer sur « Vérifier un paiement SasPay en cours ». Une clé marchande de test avec scope `payin` est nécessaire pour tester réellement.
 
@@ -33,19 +33,18 @@ Configurer au minimum `VITE_SUPABASE_URL` et `VITE_SUPABASE_ANON_KEY` dans `.env
 
 ## Supabase et migrations
 
-1. Créer le projet dans Supabase et conserver les clés dans un coffre sécurisé.
-2. Relier le répertoire : `pnpm dlx supabase login` puis `pnpm dlx supabase link --project-ref <ref>`.
-3. Appliquer dans l’ordre les migrations SQL du dossier `supabase/migrations/` à l’aide de Supabase CLI ou du SQL Editor, après revue dans le projet cible. La base gérée est partagée avec production : toute migration/écriture doit être planifiée.
-4. Les migrations créent le profil Auth avec un rôle public limité à `client`, `merchant` ou `courier`. L’inscription navigateur ne peut pas devenir `admin`. Attribuer le premier administrateur seulement via une procédure contrôlée (mise à jour directe par le propriétaire du projet après vérification de son `auth.users.id`).
-5. Auth e-mail : configurez l’URL de site et les URL de redirection (`/account/confirm`, `/reset-password`, `/login`) dans Supabase Auth. Le compte nécessite la confirmation e-mail si activée.
-6. Créer les politiques/auth méthodes convenues et tester chaque rôle/RLS dans un environnement isolé avant de toucher la base de production. Google OAuth reste désactivé tant que ses identifiants ne sont pas configurés.
-7. Les migrations initialisent les plans et catégories mais ne créent aucun compte marchand ou annonce de démonstration dans la base. Les photos produit passent par le bucket `product-images` et un préfixe UUID utilisateur.
+1. Vérifier que le projet ouvert dans Supabase correspond à `VITE_SUPABASE_URL` ; le propriétaire a confirmé qu’il s’agit d’un projet neuf/de test.
+2. Ouvrir **SQL Editor → New query**, puis appliquer une migration à la fois, de `001_initial_schema.sql` à `012_serialized_payments.sql`, dans l’ordre décrit dans [`supabase/README_MIGRATIONS.md`](supabase/README_MIGRATIONS.md). L’API de checkout SasPay requiert la migration 012. Une URL SQL de type `SUPABASE_DB_URL` n’est pas nécessaire pour cette méthode.
+3. Si une requête échoue, arrêter la séquence, conserver le message d’erreur et ne pas lancer les fichiers suivants avant d’avoir compris l’état obtenu. Le guide détaille les clauses de sécurité et les requêtes de vérification.
+4. Les migrations créent le profil Auth avec un rôle public limité à `client`, `merchant` ou `courier`. L’inscription navigateur ne peut pas devenir `admin`. Attribuer le premier administrateur seulement par le propriétaire du projet après vérification de l’identifiant `auth.users.id`.
+5. Auth e-mail : configurez l’URL de site et les URL de redirection (`/account/confirm`, `/reset-password`, `/login`) dans Supabase Auth. Le compte nécessite la confirmation e-mail si activée. Google OAuth reste désactivé tant que ses identifiants ne sont pas configurés.
+6. Les migrations initialisent les plans et catégories sans créer de compte marchand ni annonce de démonstration. Les photos produit passent par le bucket `product-images` avec un préfixe UUID utilisateur ; un bucket privé préexistant reste privé et n’obtient pas de politique de lecture publique. Les vérifications d’accès RLS et des rôles restent à effectuer après application.
 
 ## Paiements SasPay
 
 1. Créer/valider le compte marchand et les clés depuis le tableau de bord SasPay, puis confirmer que la clé possède le scope `payin` et autorise Burkina Faso (`BF`) et XOF.
 2. Ajouter à l’environnement serveur Vercel `SASPAY_API_KEY` (jamais `VITE_`, jamais Git).
-3. Endpoint de création : `POST /api/payments/create`, Bearer d’une session Supabase, `{ "planId": "merchant-premium" }` ou un plan livreur. Le backend reprend le rôle/prix depuis PostgreSQL, crée une tentative idempotente et renvoie seulement une URL `https://pay.saspay.me`.
+3. Endpoint de création : `POST /api/payments/create`, Bearer d’une session Supabase, `{ "planId": "merchant-premium" }` ou un plan livreur. Le backend reprend le rôle/prix depuis PostgreSQL et réserve atomiquement une seule tentative par profil via la RPC de migration 012 avant de créer une session ; il renvoie uniquement une URL `https://pay.saspay.me`.
 4. Vérification : `POST /api/payments/verify` avec Bearer du même utilisateur et `{ "sessionId": "…" }`. Seule réponse serveur SasPay `PAID` + `SUCCESS` active un mois d’abonnement. Une redirection, une URL ou une capture d’écran ne prouvent rien.
 5. `/api/payments/webhook` reste fermé tant que SasPay n’a pas confirmé par écrit les headers exacts et la formule de signature. Ne pas ajouter une URL de webhook avant activation du validateur.
 

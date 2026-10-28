@@ -287,12 +287,16 @@ grant insert on public.contact_messages to anon, authenticated;
 
 insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
 values ('product-images','product-images',true,5242880,array['image/jpeg','image/png','image/webp'])
-on conflict (id) do update set public=true,file_size_limit=5242880,allowed_mime_types=array['image/jpeg','image/png','image/webp'];
+on conflict (id) do nothing;
 drop policy if exists product_images_public_read on storage.objects;
 drop policy if exists product_images_owner_insert on storage.objects;
 drop policy if exists product_images_owner_update on storage.objects;
 drop policy if exists product_images_owner_delete on storage.objects;
-create policy product_images_public_read on storage.objects for select using (bucket_id='product-images');
+do $$ begin
+  if exists(select 1 from storage.buckets where id='product-images' and public) then
+    execute 'create policy product_images_public_read on storage.objects for select using (bucket_id = ''product-images'')';
+  end if;
+end $$;
 create policy product_images_owner_insert on storage.objects for insert to authenticated with check (bucket_id='product-images' and (storage.foldername(name))[1]=auth.uid()::text and (select role from public.profiles where id=auth.uid())='merchant');
 create policy product_images_owner_update on storage.objects for update to authenticated using (bucket_id='product-images' and (storage.foldername(name))[1]=auth.uid()::text) with check (bucket_id='product-images' and (storage.foldername(name))[1]=auth.uid()::text);
 create policy product_images_owner_delete on storage.objects for delete to authenticated using (bucket_id='product-images' and ((storage.foldername(name))[1]=auth.uid()::text or public.is_admin()));

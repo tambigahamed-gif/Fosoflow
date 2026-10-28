@@ -147,3 +147,7 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# FasoFlow local and deployment artifacts
+.DS_Store
+.vercel/

@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { font-family: 'DM Sans', system-ui, sans-serif; color: #202721; background: #f8f5ec; font-synthesis: none; text-rendering: optimizeLegibility; }
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: #f8f5ec; }
+button, input, select, textarea { font: inherit; }
+button, a { -webkit-tap-highlight-color: transparent; }
+::selection { background: rgba(21, 91, 70, .16); }
+
+@layer components {
+  .page-wrap { @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8; }
+  .eyebrow { @apply text-xs font-bold uppercase tracking-[.16em] text-faso-forest; }
+  .section-title { @apply font-display text-3xl font-extrabold tracking-tight text-faso-ink sm:text-4xl; }
+  .card-surface { @apply rounded-3xl border border-faso-line bg-white shadow-soft; }
+  .btn-primary { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-faso-forest px-5 py-3 text-sm font-bold text-white transition hover:bg-faso-forestDark focus:outline-none focus:ring-4 focus:ring-faso-forest/20 disabled:cursor-not-allowed disabled:opacity-50; }
+  .btn-secondary { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-faso-line bg-white px-5 py-3 text-sm font-bold text-faso-ink transition hover:border-faso-forest/30 hover:bg-faso-ivory focus:outline-none focus:ring-4 focus:ring-faso-forest/10 disabled:opacity-50; }
+  .field { @apply w-full rounded-2xl border border-faso-line bg-white px-4 py-3 text-sm text-faso-ink outline-none transition placeholder:text-faso-muted/70 focus:border-faso-forest focus:ring-4 focus:ring-faso-forest/10; }
+  .label { @apply mb-2 block text-sm font-semibold text-faso-ink; }
+  .badge-soft { @apply inline-flex items-center rounded-full bg-faso-ivory px-3 py-1 text-xs font-bold text-faso-forest; }
+  .muted { @apply text-faso-muted; }
+}
+
+.hero-grain { background-image: radial-gradient(rgba(21,91,70,.11) .65px, transparent .65px); background-size: 12px 12px; }
+.fade-up { animation: fade-up .48s cubic-bezier(.2,.7,.2,1) both; }
+@keyframes fade-up { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }

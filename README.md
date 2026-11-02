@@ -1,27 +1,46 @@
 # FasoFlow
 
-Marketplace SaaS en français destinée au Burkina Faso : clients, commerçants et livreurs ; montants affichés en XOF/FCFA. Stack : React 18, TypeScript strict, Vite, Tailwind, Supabase Auth/PostgreSQL/Storage/Realtime et fonctions serveur Vercel.
+Marketplace SaaS en français destinée au Burkina Faso : clients, commerçants et livreurs ; montants en XOF/FCFA. Stack : React 18, TypeScript strict, Vite, Tailwind, Supabase Auth/PostgreSQL/Storage/Realtime et fonctions server-side Vercel.
 
-## État et limites importantes
+Le marché actif est centralisé dans `src/lib/market.ts` (Burkina Faso, `BF`, XOF, français, `Africa/Ouagadougou`). Cette structure prépare l’ajout futur de marchés sans activer de pays ou devise non validés.
 
-Les clés du projet Supabase ont été configurées et vérifiées par des requêtes de diagnostic en lecture seule : Auth répond, mais le schéma FasoFlow n’est pas encore visible et aucune migration ni écriture n’a été exécutée. Aucun connecteur d’administration Supabase n’est actif ; l’application de schéma doit donc se faire par le SQL Editor, sans `SUPABASE_DB_URL` (voir [`supabase/README_MIGRATIONS.md`](supabase/README_MIGRATIONS.md)). Aucun compte marchand SasPay ni déploiement Vercel n’est connecté. Les annonces de démonstration sont étiquetées et ne peuvent pas être achetées ; aucune donnée ou paiement fictif n’est présenté comme réel. Les CGU/confidentialité demeurent à compléter par l’exploitant (raison sociale, coordonnées, conservation et droits).
+## État actuel et limites
 
-L’intégration du prestataire est **SasPay** (saspay.me), pas SasaPay. L’API checkout et son statut serveur sont implémentés dans `/api/payments`. Une session de paiement ne suffit pas à valider un règlement : l’activation se fait seulement si l’API officielle confirme `PAID` et `SUCCESS`. Les docs indiquent actuellement que le retour `return_url` n’est pas pris en charge : la session est conservée sur l’appareil et l’utilisateur peut revenir dans son espace abonnement pour appuyer sur « Vérifier un paiement SasPay en cours ». Une clé marchande de test avec scope `payin` est nécessaire pour tester réellement.
+L’application comprend le parcours marketplace, les espaces à rôles, FasoFlow Business et FasoFlow Intelligence. Le catalogue public distingue maintenant une liste réellement vide d’une erreur API et propose les filtres disponibles. Au dernier contrôle public, la base ne contenait aucune boutique ni aucun produit visible ; aucune annonce factice n’est ajoutée. Un commerçant doit créer sa boutique et ses annonces, puis celles-ci doivent être approuvées selon le workflow de modération.
 
-L’exemple officiel de réponse du endpoint de statut expose l’identifiant de session, `status`, `transaction_status` et les identifiants/références de transaction, mais pas le montant ni la devise [documentation du statut SasPay](https://docs.saspay.me/api-reference/payments/checkout-status). FasoFlow lie donc la confirmation automatisée à l’identifiant UUID de la session créé pour le montant XOF enregistré côté serveur. Si la création renvoie un résultat réseau incomplet ou incertain, l’application bloque toute nouvelle tentative et exige qu’un administrateur vérifie la transaction dans le compte marchand SasPay, saisisse la référence et consigne une note d’audit avant l’activation.
+Les requêtes de diagnostic précédentes ont identifié les endpoints Supabase et confirmé que plusieurs données sensibles refusent les accès anonymes. Elles ne permettent pas de confirmer l’historique des migrations, les règles RLS pour chaque rôle ou la présence de l’instance exacte du schéma. L’accès administrateur Supabase n’est pas disponible ici. Ne lancez pas les migrations sur la base connectée sans d’abord vérifier son historique et l’état réel de ses tables/politiques.
 
-**Les webhooks sont volontairement désactivés.** Le guide officiel exige un timestamp à moins de cinq minutes et une comparaison HMAC du corps brut en temps constant, mais les informations récupérées ne précisent pas les trois noms d’en-têtes complets, l’algorithme, la chaîne signée ni le nom du secret marchand. `/api/payments/webhook` répond 503 et ne modifie aucun paiement. Ne pas activer des webhooks en production avant confirmation écrite de SasPay des paramètres exacts puis un test de signature valide et invalide.
+Cette mission a modifié uniquement les fichiers du dépôt local : aucune variable d’environnement réelle, donnée, migration en base, publication GitHub ou version Vercel n’a été changée. Les pages Conditions et Confidentialité restent des brouillons à compléter par l’exploitant (identité officielle, coordonnées, durées, droits et règles applicables) avant une ouverture publique définitive.
 
-Le paiement manuel reste en attente jusqu’à décision admin. Les instructions sont vides au départ et doivent être configurées dans la zone d’administration ; aucune coordonnée bancaire ou mobile n’est fournie par défaut. Les clients ne paient pas d’abonnement. Les abonnements payants ne prélèvent pas de commission sur les ventes ou livraisons.
+## SasPay et abonnements
 
-## Prérequis
+Le fournisseur demandé est **SasPay** (et non SasaPay). La documentation officielle et l’endpoint public des pays déclarent actuellement `BF` actif avec devise par défaut `XOF`. Cela ne confirme pas le KYC, les réseaux activés ni le scope `PAYIN` du compte marchand FasoFlow. Aucun compte marchand, secret, paiement sandbox ni webhook configuré n’a été testé. Sources : [documentation SasPay](https://docs.saspay.me/api-reference/introduction), [checkout](https://docs.saspay.me/api-reference/payments/checkout-create), [statut](https://docs.saspay.me/api-reference/payments/checkout-status), [transactions](https://docs.saspay.me/api-reference/transactions), [webhooks et signature](https://docs.saspay.me/api-reference/webhooks), [OpenAPI](https://docs.saspay.me/api-reference/openapi.json), [pays actifs](https://api.saspay.me/api/v1/countries/).
 
-- Node.js 20+ et pnpm 11 (version verrouillée dans `package.json`).
-- Projet Supabase (Auth e-mail activé, PostgreSQL et Storage).
-- Pour l’API, un déploiement Vercel et `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` côté serveur uniquement.
-- Pour le checkout réel, clé API marchand SasPay avec scope payin et pays/devise autorisés par le compte (ici `BF` / `XOF`).
+Le checkout serveur utilise `POST /api/payments/create`; le prix et le rôle sont relus depuis Supabase. La réservation FasoFlow empêche les tentatives concurrentes côté application. L’API SasPay ne prend pas en charge `Idempotency-Key` sur la création de checkout, donc une issue incertaine bloque le nouvel essai et demande une vérification, plutôt que de créer potentiellement un second checkout.
+
+`POST /api/payments/verify` vérifie le statut auprès de SasPay. Une redirection, une capture d’écran ou une création de session ne prouvent pas le paiement. Le webhook `/api/payments/webhook` vérifie le corps HTTP brut avec les en-têtes `X-Webhook-Signature`, `X-Webhook-Timestamp` et `X-Webhook-Event`, l’HMAC SHA-256 officiel `timestamp + "." + rawBody`, la fenêtre de 300 secondes et l’égalité du type d’événement. Il rapproche ensuite l’identifiant de transaction reçu par une requête serveur SasPay, vérifie le statut `SUCCESS`, le flux entrant, XOF, le montant demandé contre la réservation FasoFlow et le statut de session lorsqu’il est disponible. Les événements sont dédupliqués. Le secret `signing_secret` est séparé de la clé API, visible une seule fois à sa création/rotation dans le dashboard, et n’est pas configuré ici. Sans `SASPAY_WEBHOOK_SIGNING_SECRET` ou `SASPAY_API_KEY`, le webhook reste fermé et répond 503.
+
+Les clients restent gratuits ; les offres payantes concernent seulement les commerçants et les livreurs. Il n’y a ni commission sur les ventes/livraisons ni renouvellement automatique. Le paiement manuel reste `pending` jusqu’à décision administrateur ; aucune coordonnée de paiement n’est inventée.
+
+## FasoFlow Business
+
+Accessible au rôle commerçant avec un abonnement Business actif sous `/merchant/business`. Le panneau utilise les commandes, lignes de commande, produits, paiements, mouvements de stock et dépenses de la boutique authentifiée. Il sépare montant commandé, commandes livrées non réglées et encaissements `payment_status=paid`. Les bénéfices sont des estimations, limités aux coûts connus, et l’interface indique quand une partie des coûts manque. Les périodes journalière, hebdomadaire et mensuelle, les tendances, dépenses, clients agrégés, produits les plus vendus et alertes de stock faible utilisent les données disponibles ; aucune vente ou marge fictive n’est générée.
+
+La migration locale `013_business_operations.sql` ajoute les tables privées `product_costs` et `order_item_costs`, le journal de stock et les dépenses avec règles d’accès. Les coûts ne sont jamais ajoutés à `products` ou `order_items`, qui peuvent être accessibles au client ; les règles RLS exigent la boutique propriétaire et un plan commerçant Business actif (ou un administrateur autorisé). Les anciens coûts demeurent inconnus ; aucune valeur n’est reconstituée. Sans migration 013, les commandes et produits existants restent lisibles, mais le coût, les dépenses et l’historique Business sont limités ; l’interface l’indique.
+
+## FasoFlow Intelligence
+
+Accessible au rôle commerçant avec un abonnement Business actif sous `/merchant/intelligence`. Les tâches préparées couvrent les descriptions, l’amélioration d’annonces, la suggestion de prix, l’analyse des ventes/stocks, les recommandations, alertes et résumés journaliers/hebdomadaires. L’interface fournisseur est indépendante ; l’API serveur authentifie le rôle, l’entitlement et la propriété de la boutique, limite les lignes et n’envoie pas de coordonnées ou d’identifiants de clients. Le fournisseur n’est pas configuré : aucun résultat IA n’est simulé.
+
+FasoFlow Intelligence est incluse dans l’offre Business existante et l’écran comme l’API vérifient un abonnement commerçant Business actif. Sa configuration future est facultative et server-only : `FASOFLOW_AI_PROVIDER=openai-compatible`, `FASOFLOW_AI_API_KEY`, `FASOFLOW_AI_MODEL` et `FASOFLOW_AI_BASE_URL` HTTPS. Les noms sont documentés en commentaire dans `.env.example`; aucune variable réelle n’a été modifiée. L’administrateur du déploiement doit choisir un fournisseur, un modèle et une base URL autorisée puis ajouter les valeurs uniquement aux secrets serveur Vercel.
+
+## Contact anti-spam
+
+Le formulaire public transmet désormais ses données à `/api/contact` au lieu d’effectuer une insertion Supabase directe depuis le navigateur. Le serveur valide les champs, traite un honeypot et applique une limite persistante par empreintes HMAC d’adresse réseau/e-mail. La migration additive `014_contact_rate_limit.sql` retire l’insertion anonyme directe et crée la fonction SQL accessible seulement à `service_role`. Cette protection complète devient opérationnelle après application autorisée de la migration 014 et configuration serveur Supabase. Elle n’a pas été appelée en production pendant cette mission.
 
 ## Installation locale
+
+Prérequis : Node.js 20+ et la version pnpm verrouillée dans `package.json`.
 
 ```bash
 cp .env.example .env.local
@@ -29,34 +48,15 @@ pnpm install
 pnpm dev
 ```
 
-Configurer au minimum `VITE_SUPABASE_URL` et `VITE_SUPABASE_ANON_KEY` dans `.env.local`. `pnpm dev` écoute `0.0.0.0:3000`. Les clés server-only ne doivent jamais être préfixées `VITE_`. `.env.local` est ignoré par Git.
+`pnpm dev` écoute `0.0.0.0:3000`. Configurer les clés publiques `VITE_SUPABASE_URL` et `VITE_SUPABASE_ANON_KEY` uniquement dans l’environnement local approuvé. Les fonctions serveur utilisent `SUPABASE_URL`, `SUPABASE_ANON_KEY` et `SUPABASE_SERVICE_ROLE_KEY`; les secrets ne doivent jamais porter le préfixe `VITE_` ni apparaître dans `dist/`. Aucun fichier `.env.local` n’est versionné.
 
 ## Supabase et migrations
 
-1. Vérifier que le projet ouvert dans Supabase correspond à `VITE_SUPABASE_URL` ; le propriétaire a confirmé qu’il s’agit d’un projet neuf/de test.
-2. Ouvrir **SQL Editor → New query**, puis appliquer une migration à la fois, de `001_initial_schema.sql` à `012_serialized_payments.sql`, dans l’ordre décrit dans [`supabase/README_MIGRATIONS.md`](supabase/README_MIGRATIONS.md). L’API de checkout SasPay requiert la migration 012. Une URL SQL de type `SUPABASE_DB_URL` n’est pas nécessaire pour cette méthode.
-3. Si une requête échoue, arrêter la séquence, conserver le message d’erreur et ne pas lancer les fichiers suivants avant d’avoir compris l’état obtenu. Le guide détaille les clauses de sécurité et les requêtes de vérification.
-4. Les migrations créent le profil Auth avec un rôle public limité à `client`, `merchant` ou `courier`. L’inscription navigateur ne peut pas devenir `admin`. Attribuer le premier administrateur seulement par le propriétaire du projet après vérification de l’identifiant `auth.users.id`.
-5. Auth e-mail : configurez l’URL de site et les URL de redirection (`/account/confirm`, `/reset-password`, `/login`) dans Supabase Auth. Le compte nécessite la confirmation e-mail si activée. Google OAuth reste désactivé tant que ses identifiants ne sont pas configurés.
-6. Les migrations initialisent les plans et catégories sans créer de compte marchand ni annonce de démonstration. Les photos produit passent par le bucket `product-images` avec un préfixe UUID utilisateur ; un bucket privé préexistant reste privé et n’obtient pas de politique de lecture publique. Les vérifications d’accès RLS et des rôles restent à effectuer après application.
+Consulter [`supabase/README_MIGRATIONS.md`](supabase/README_MIGRATIONS.md) avant tout SQL. Les migrations `001`–`012` constituent le schéma historique ; `013` étend Business et `014` protège le formulaire Contact. L’existence de tables déjà joignables par PostgREST ne prouve pas que chaque version du schéma ou chaque migration correspond au dépôt. Vérifier d’abord le projet, l’historique et les objets présents ; appliquer seulement les migrations manquantes, compatibles et expressément autorisées, une à la fois. Il n’est pas nécessaire de disposer de `SUPABASE_DB_URL` pour utiliser le SQL Editor, mais cette méthode ne rend pas sûre une exécution aveugle.
 
-## Paiements SasPay
+La migration 013 suppose le schéma et les fonctions présents après la base 001–012. La migration 014 suppose `contact_messages` et la politique nommée définie dans 002 ; elle révoque l’insertion publique sans supprimer les messages existants. Les deux nouveaux fichiers sont uniquement locaux dans cette mission et n’ont pas été exécutés en base.
 
-1. Créer/valider le compte marchand et les clés depuis le tableau de bord SasPay, puis confirmer que la clé possède le scope `payin` et autorise Burkina Faso (`BF`) et XOF.
-2. Ajouter à l’environnement serveur Vercel `SASPAY_API_KEY` (jamais `VITE_`, jamais Git).
-3. Endpoint de création : `POST /api/payments/create`, Bearer d’une session Supabase, `{ "planId": "merchant-premium" }` ou un plan livreur. Le backend reprend le rôle/prix depuis PostgreSQL et réserve atomiquement une seule tentative par profil via la RPC de migration 012 avant de créer une session ; il renvoie uniquement une URL `https://pay.saspay.me`.
-4. Vérification : `POST /api/payments/verify` avec Bearer du même utilisateur et `{ "sessionId": "…" }`. Seule réponse serveur SasPay `PAID` + `SUCCESS` active un mois d’abonnement. Une redirection, une URL ou une capture d’écran ne prouvent rien.
-5. `/api/payments/webhook` reste fermé tant que SasPay n’a pas confirmé par écrit les headers exacts et la formule de signature. Ne pas ajouter une URL de webhook avant activation du validateur.
-
-## Paiement manuel de secours
-
-Un administrateur configure les instructions exactes via l’écran Admin > Paiements ; l’utilisateur soumet ensuite une référence. L’état reste `pending` (avec `provider=manual`). Un admin examine et accepte/rejette depuis le tableau de bord ; la validation enregistre `reviewed_by` et `reviewed_at`. Les instructions ne doivent pas contenir d’informations non vérifiées.
-
-## Commandes, livraisons et rôles
-
-`place_order` verrouille les articles/stock et écrit une commande et des prix snapshot dans une seule transaction. Les commandes ne sont pas des paiements : elles restent `unpaid`. `accept_delivery` est une mise à jour conditionnelle atomique ; le livreur doit activer sa disponibilité. Les statuts livraison autorisés restent `pending`, `accepted`, `in_progress`, `delivered`, `cancelled`. Les accès aux adresses clients sont accordés uniquement au livreur affecté. Aucun suivi GPS permanent n’est implémenté.
-
-## Vérifications
+## Tests et contrôles locaux
 
 ```bash
 pnpm typecheck
@@ -65,19 +65,21 @@ pnpm test
 pnpm build
 ```
 
-## Déploiement Vercel
+Les tests Business et SasPay utilisent des fonctions pures et n’appellent pas les services externes. Ne soumettez pas le formulaire Contact dans un environnement local connecté à la base de production. Aucun scénario réel SasPay, contrôle complet RLS multi-rôle ou migration n’a été exécuté dans cette mission.
 
-1. Importer le dépôt `main` dans Vercel en reconnaissant Vite.
-2. Configurer les variables navigateur `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` et les secrets server-only ci-dessus. Ne pas copier `.env.local` au dépôt.
-3. Ajouter `CRON_SECRET` si le cron journalier doit expirer les abonnements dans le statut de base. Les règles d’accès premium vérifient également `current_period_end`; l’historique reste conservé.
-4. Construire `pnpm build`. Les fichiers `/api/*` s’exécutent comme fonctions Vercel; `vercel.json` fournit le fallback des routes React et le cron quotidien.
-5. Tester au minimum routes publiques, connexion/rôles, RLS, stockage image, commande/course concurrente, renouvellement/expiration et checkout sandbox, plus l’absence de secrets `service_role`/SasPay dans `dist/`.
+## Mise en service future — intervention/autorisation requise
+
+1. Dans Supabase, vérifier la référence du projet, l’état exact du schéma, les migrations exécutées et les politiques avant tout SQL ; prendre une sauvegarde vérifiée. Pour `013` et `014`, obtenir une autorisation distincte et appliquer selon le guide.
+2. Dans SasPay, finaliser le KYC, confirmer sur le compte marchand le scope `PAYIN` et les réseaux XOF activés (le répertoire public liste BF actif/XOF, ce qui ne suffit pas à prouver l’activation marchand), créer une clé test serveur, puis créer un webhook `transaction.success` et copier immédiatement son `signing_secret` dans le secret Vercel `SASPAY_WEBHOOK_SIGNING_SECRET`. Ne jamais utiliser la clé API comme secret de signature. Tester signatures valides/invalide, statuts et rapprochement avec un checkout de test.
+3. Si l’IA est souhaitée, sélectionner et autoriser le fournisseur, modèle et endpoint HTTPS, puis ajouter les valeurs facultatives au seul environnement serveur. Sans cela, l’écran reste désactivé sans résultat inventé.
+4. Vérifier les secrets Vercel existants sans les exposer, confirmer les protections RLS et le formulaire après migrations, vérifier le rendu PWA/mobile et les parcours authentifiés.
+5. Cette version locale n’a pas été poussée sur GitHub ni déployée sur Vercel. Demander séparément l’autorisation avant toute action susceptible de déclencher une publication ou de modifier l’environnement de production.
 
 ## Répertoires
 
-- `src/app`, `src/pages`, `src/components` : app, routage, écrans publics et espaces métier.
-- `src/features` : authentification, commandes/panier, messagerie, abonnements et logique métier.
-- `src/lib`, `src/types`, `src/styles` : client public Supabase, utilitaires, contrats TypeScript et styles.
-- `api/payments`, `api/cron`, `api/_lib` : fonctions serverless Vercel et accès aux secrets.
-- `supabase/migrations` : schéma, RLS, RPC transactionnelles, plans, catégories et accès livreur.
-- `public/` : marque, routes, manifeste, service worker statique et visuels originaux (`images/`) intégrés au build.
+- `src/app/`, `src/pages/`, `src/components/` : routeur, auth, pages publiques et espaces métier.
+- `src/features/business/`, `src/features/intelligence/` : calculs, données, contrats et interface de gestion/IA.
+- `src/features/`, `src/lib/`, `src/types/`, `src/styles/` : marketplace, abonnements, Supabase navigateur, utilitaires, types et styles.
+- `api/payments/`, `api/intelligence/`, `api/contact.ts`, `api/_lib/` : fonctions serverless Vercel et accès server-only.
+- `supabase/migrations/` : migrations SQL historiques 001–012 et additions locales 013–014.
+- `public/` : identité officielle, routes, manifeste PWA et ressources publiques.

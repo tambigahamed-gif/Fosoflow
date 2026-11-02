@@ -39,8 +39,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (verification === 'invalid') return sendJson(res, 502, { status: 'pending', message: 'La réponse de statut SasPay est incomplète. Aucun abonnement n’a été activé.' });
   const status = typeof result.status === 'string' ? result.status.toUpperCase() : '';
   const transactionStatus = typeof result.transaction_status === 'string' ? result.transaction_status.toUpperCase() : '';
+  const transactionId = typeof result.transaction_id === 'string' && result.transaction_id.length <= 120 ? result.transaction_id : null;
+  const transactionReference = typeof result.transaction_reference === 'string' && result.transaction_reference.length <= 160 ? result.transaction_reference : null;
+  if (transactionId || transactionReference) {
+    const { error: linkError } = await admin.from('payments').update({
+      ...(transactionId ? { provider_transaction_id: transactionId } : {}),
+      ...(transactionReference ? { provider_reference: transactionReference } : {}),
+      provider_data: { status, transaction_status: transactionStatus, transaction_id: transactionId, transaction_reference: transactionReference },
+    }).eq('id', payment.id).in('status', ['pending', 'creating']);
+    if (linkError) {
+      console.error('SasPay transaction reference could not be stored', { paymentId: payment.id, code: linkError.code });
+      return sendJson(res, 503, { status: 'pending', message: 'Le statut est confirmé mais sa référence ne peut pas encore être enregistrée. Réessayez plus tard.' });
+    }
+  }
   if (verification === 'paid') {
-    const { error: activationError } = await admin.rpc('mark_payment_paid', { p_payment_id: payment.id, p_provider_data: { status, transaction_status: transactionStatus, transaction_id: typeof result.transaction_id === 'string' ? result.transaction_id : null, transaction_reference: typeof result.transaction_reference === 'string' ? result.transaction_reference : null } });
+    const { error: activationError } = await admin.rpc('mark_payment_paid', { p_payment_id: payment.id, p_provider_data: { status, transaction_status: transactionStatus, transaction_id: transactionId, transaction_reference: transactionReference } });
     if (activationError) {
       console.error('SasPay payment confirmation requires review', { paymentId: payment.id, providerSessionId: payment.provider_session_id, error: activationError.message });
       return sendJson(res, 503, { status: 'pending', message: 'SasPay confirme le paiement, mais l’activation est en attente de synchronisation.' });

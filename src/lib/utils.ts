@@ -1,17 +1,13 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { formatMarketAmount } from './market';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 export function formatXof(value: number | string | null | undefined) {
-  const amount = Number(value ?? 0);
-  return new Intl.NumberFormat('fr-FR', {
-    style: 'currency',
-    currency: 'XOF',
-    maximumFractionDigits: 0,
-  }).format(Number.isFinite(amount) ? amount : 0);
+  return formatMarketAmount(value);
 }
 
 export function formatDate(value: string | Date, options?: Intl.DateTimeFormatOptions) {

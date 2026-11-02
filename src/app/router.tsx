@@ -5,6 +5,8 @@ import { HomePage, MarketplacePage, ProductPage, ShopsPage, ShopPage, CategoryPa
 import { AuthPage } from '../pages/auth/AuthPage';
 import { DashboardPage } from '../pages/client/DashboardPage';
 import { MerchantProductsPage } from '../pages/merchant/MerchantProductsPage';
+import { MerchantBusinessPage } from '../pages/merchant/MerchantBusinessPage';
+import { IntelligencePage } from '../pages/merchant/IntelligencePage';
 import { CourierDeliveriesPage } from '../pages/courier/CourierDeliveriesPage';
 import { AdminPaymentsPage } from '../pages/admin/AdminPaymentsPage';
 import { AdminOperationsPage } from '../pages/admin/AdminOperationsPage';
@@ -32,7 +34,12 @@ export const router = createBrowserRouter([
         { index: true, element: <DashboardPage role="client" /> }, { path: 'dashboard', element: <DashboardPage role="client" /> }, { path: ':section', element: <DashboardPage role="client" /> },
       ]},
       { path: 'merchant', element: <ProtectedRoute allowedRoles={['merchant']} />, children: [
-        { index: true, element: <DashboardPage role="merchant" /> }, { path: 'dashboard', element: <DashboardPage role="merchant" /> }, { path: 'products', element: <MerchantProductsPage /> }, { path: ':section', element: <DashboardPage role="merchant" /> },
+        { index: true, element: <DashboardPage role="merchant" /> },
+        { path: 'dashboard', element: <DashboardPage role="merchant" /> },
+        { path: 'products', element: <MerchantProductsPage /> },
+        { path: 'business', element: <MerchantBusinessPage /> },
+        { path: 'intelligence', element: <IntelligencePage /> },
+        { path: ':section', element: <DashboardPage role="merchant" /> },
       ]},
       { path: 'courier', element: <ProtectedRoute allowedRoles={['courier']} />, children: [
         { index: true, element: <DashboardPage role="courier" /> }, { path: 'dashboard', element: <DashboardPage role="courier" /> }, { path: 'deliveries', element: <CourierDeliveriesPage /> }, { path: ':section', element: <DashboardPage role="courier" /> },

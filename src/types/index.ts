@@ -37,6 +37,11 @@ export interface Product {
   categories?: Pick<Category, 'name' | 'slug'> | null;
 }
 
+/** Projection privée du coût d’achat jointe uniquement dans l’espace commerçant. */
+export interface MerchantProduct extends Product {
+  purchase_cost_xof: number | null;
+}
+
 export interface Shop {
   id: string;
   owner_id: string;
@@ -82,4 +87,51 @@ export interface Plan {
   billing_interval: 'month' | 'year' | 'none';
   product_limit: number | null;
   features: string[];
+}
+
+export type BusinessPeriod = 'day' | 'week' | 'month';
+
+export interface BusinessOrder {
+  id: string;
+  customer_id: string;
+  shop_id: string;
+  status: Order['status'];
+  payment_status: Order['payment_status'];
+  subtotal_xof: number;
+  total_xof: number;
+  created_at: string;
+}
+
+export interface BusinessOrderItem {
+  id: string;
+  order_id: string;
+  product_id: string | null;
+  product_name_snapshot: string;
+  unit_price_xof: number;
+  purchase_cost_snapshot_xof: number | null;
+  quantity: number;
+  line_total_xof: number;
+}
+
+export interface BusinessExpense {
+  id: string;
+  shop_id: string;
+  title: string;
+  category: string;
+  amount_xof: number;
+  spent_at: string;
+  created_at: string;
+}
+
+export interface StockMovement {
+  id: string;
+  shop_id: string;
+  product_id: string | null;
+  product_name_snapshot: string;
+  order_id: string | null;
+  movement_type: 'order_sale' | 'order_return' | 'adjustment';
+  quantity_delta: number;
+  stock_before: number;
+  stock_after: number;
+  created_at: string;
 }

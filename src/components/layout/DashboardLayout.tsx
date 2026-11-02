@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Bell, Box, ChevronLeft, CreditCard, Heart, LayoutDashboard, LogOut, Menu, MessageCircle, Package, Settings, Shield, ShoppingBag, ShoppingBasket, Store, Truck, Users, Wallet, X } from 'lucide-react';
+import { Bell, Box, BrainCircuit, ChevronLeft, CreditCard, Heart, LayoutDashboard, LogOut, Menu, MessageCircle, Package, Settings, Shield, ShoppingBag, ShoppingBasket, Store, Truck, Users, Wallet, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../app/auth';
 import type { AppRole } from '../../types';
@@ -11,7 +11,7 @@ const navByRole: Record<AppRole, { label: string; path: string; icon: typeof Lay
     { label: 'Vue d’ensemble', path: 'dashboard', icon: LayoutDashboard }, { label: 'Mon panier', path: 'cart', icon: ShoppingBasket }, { label: 'Mes commandes', path: 'orders', icon: ShoppingBag }, { label: 'Mes favoris', path: 'favorites', icon: Heart }, { label: 'Mes avis', path: 'reviews', icon: Shield }, { label: 'Messages', path: 'messages', icon: MessageCircle }, { label: 'Livraisons', path: 'deliveries', icon: Truck }, { label: 'Notifications', path: 'notifications', icon: Bell }, { label: 'Mon profil', path: 'settings', icon: Settings },
   ],
   merchant: [
-    { label: 'Vue d’ensemble', path: 'dashboard', icon: LayoutDashboard }, { label: 'Ma boutique', path: 'shop', icon: Store }, { label: 'Produits', path: 'products', icon: Box }, { label: 'Commandes', path: 'orders', icon: ShoppingBag }, { label: 'Messages', path: 'messages', icon: MessageCircle }, { label: 'Avis clients', path: 'reviews', icon: Heart }, { label: 'Statistiques', path: 'analytics', icon: Wallet }, { label: 'Abonnement', path: 'subscription', icon: CreditCard }, { label: 'Paramètres', path: 'settings', icon: Settings },
+    { label: 'Vue d’ensemble', path: 'dashboard', icon: LayoutDashboard }, { label: 'Ma boutique', path: 'shop', icon: Store }, { label: 'Produits', path: 'products', icon: Box }, { label: 'Commandes', path: 'orders', icon: ShoppingBag }, { label: 'Business', path: 'business', icon: Wallet }, { label: 'FasoFlow Intelligence', path: 'intelligence', icon: BrainCircuit }, { label: 'Messages', path: 'messages', icon: MessageCircle }, { label: 'Avis clients', path: 'reviews', icon: Heart }, { label: 'Statistiques', path: 'analytics', icon: Wallet }, { label: 'Abonnement', path: 'subscription', icon: CreditCard }, { label: 'Paramètres', path: 'settings', icon: Settings },
   ],
   courier: [
     { label: 'Vue d’ensemble', path: 'dashboard', icon: LayoutDashboard }, { label: 'Courses', path: 'deliveries', icon: Truck }, { label: 'Historique', path: 'history', icon: Package }, { label: 'Messages', path: 'messages', icon: MessageCircle }, { label: 'Revenus', path: 'earnings', icon: Wallet }, { label: 'Abonnement', path: 'subscription', icon: CreditCard }, { label: 'Paramètres', path: 'settings', icon: Settings },

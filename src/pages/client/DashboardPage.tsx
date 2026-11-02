@@ -18,7 +18,7 @@ import { ProductCard } from '../../components/products/ProductCard';
 const labels: Record<string, string> = {
   dashboard: 'Vue d’ensemble', orders: 'Mes commandes', favorites: 'Mes favoris', addresses: 'Mes adresses',
   messages: 'Messages', deliveries: 'Livraisons', reviews: 'Avis clients', notifications: 'Notifications',
-  shop: 'Ma boutique', products: 'Produits', analytics: 'Statistiques', subscription: 'Abonnement',
+  shop: 'Ma boutique', products: 'Produits', analytics: 'Statistiques', business: 'FasoFlow Business', intelligence: 'FasoFlow Intelligence', subscription: 'Abonnement',
   settings: 'Mon profil', history: 'Historique des courses', earnings: 'Mes revenus', users: 'Utilisateurs',
   shops: 'Boutiques', reports: 'Signalements', cart: 'Mon panier',
 };

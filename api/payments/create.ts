@@ -14,6 +14,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!context) return sendJson(res, 401, { error: 'Session valide et configuration serveur requises.' });
   const parsed = inputSchema.safeParse(parseBody(req));
   if (!parsed.success) return sendJson(res, 400, { error: 'Offre invalide.' });
+  const customerEmail = context.user.email?.trim();
+  if (!customerEmail) return sendJson(res, 400, { error: 'Une adresse e-mail vérifiée est nécessaire pour ouvrir un checkout SasPay.' });
   const apiKey = process.env.SASPAY_API_KEY;
   if (!apiKey) return sendJson(res, 503, { error: 'SasPay n’est pas configuré : la clé marchande doit être ajoutée côté serveur.' });
   const idempotencyKey = req.headers['idempotency-key'];
@@ -93,8 +95,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const payment = { id: reservation.id };
 
   const needsReview = async (details: Record<string, unknown>, sessionId?: string) => {
-    const update = await admin.from('payments').update({ status: 'pending', provider_session_id: sessionId ?? null, provider_data: { ...details, outcome_uncertain: true } }).eq('id', payment.id);
+    const update = await admin.from('payments')
+      .update({ status: 'pending', provider_session_id: sessionId ?? null, provider_data: { ...details, outcome_uncertain: true } })
+      .eq('id', payment.id).eq('status', 'creating').select('id').maybeSingle();
     if (update.error) console.error('SasPay uncertain checkout requires admin review', { paymentId: payment.id, error: update.error.message });
+    if (!update.data) {
+      const current = await admin.from('payments').select('status').eq('id', payment.id).maybeSingle();
+      if (current.data?.status === 'paid') return sendJson(res, 200, { status: 'paid', paymentId: payment.id, error: 'Paiement confirmé par SasPay.' });
+    }
     return sendJson(res, 202, { status: 'needs_admin_review', paymentId: payment.id, ...(sessionId ? { sessionId } : {}), error: 'SasPay n’a pas fourni de résultat complet. Ne relancez pas le paiement ; un administrateur doit vérifier l’historique marchand.' });
   };
 
@@ -102,9 +110,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     amount: `${priceXof}.00`,
     currency: 'XOF',
     country: 'BF',
-    description: `FasoFlow ${plan.name} — ${profile.role}`,
-    ...(user.email ? { customer_email: user.email } : {}),
-    ...(profile.full_name ? { customer_name: profile.full_name } : {}),
+    description: `FasoFlow ${plan.name} — ${profile.role} [FFPAYMENT:${payment.id}]`,
+    customer_email: customerEmail,
+    customer_name: profile.full_name?.trim() || customerEmail.split('@')[0] || 'Membre FasoFlow',
+    metadata: { fasoflow_payment_id: payment.id },
   };
   let providerResponse: Response;
   try {
@@ -120,10 +129,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const providerBody = await providerResponse.json().catch(() => null) as Record<string, unknown> | null;
   if (!providerResponse.ok && providerResponse.status < 500) {
-    const { error: updateError } = await admin.from('payments').update({ status: 'failed', provider_data: { provider_http_status: providerResponse.status, provider_code: typeof providerBody?.code === 'string' ? providerBody.code : null } }).eq('id', payment.id);
-    if (updateError) console.error('SasPay rejected checkout but payment row could not be updated', { paymentId: payment.id, error: updateError.message });
+    const failureUpdate = await admin.from('payments')
+      .update({ status: 'failed', provider_data: { provider_http_status: providerResponse.status, provider_code: typeof providerBody?.code === 'string' ? providerBody.code : null } })
+      .eq('id', payment.id).eq('status', 'creating').select('id').maybeSingle();
+    if (failureUpdate.error) {
+      console.error('SasPay rejected checkout but payment transition requires review', { paymentId: payment.id, code: failureUpdate.error.code });
+      return sendJson(res, 202, { status: 'needs_admin_review', retrySafe: false, paymentId: payment.id, error: 'SasPay a répondu, mais l’état local n’a pas pu être confirmé. Vérifiez la tentative avant tout nouvel essai.' });
+    }
+    if (!failureUpdate.data) {
+      const current = await admin.from('payments').select('status').eq('id', payment.id).maybeSingle();
+      if (current.data?.status === 'paid') return sendJson(res, 200, { status: 'paid', paymentId: payment.id, error: 'Paiement confirmé par SasPay.' });
+      return sendJson(res, 202, { status: 'needs_admin_review', retrySafe: false, paymentId: payment.id, error: 'La tentative a changé d’état pendant la création. Vérifiez son statut avant tout nouvel essai.' });
+    }
     const scopeError = providerBody?.code === 'api_key_scope_forbidden';
-    return sendJson(res, providerResponse.status === 403 ? 403 : 502, { status: 'failed', retrySafe: !updateError, paymentId: payment.id, error: scopeError ? 'La clé SasPay ne possède pas le scope payin requis. Vérifiez les permissions du compte marchand.' : 'SasPay a refusé la création de session. Vérifiez le compte avant de réessayer.' });
+    return sendJson(res, providerResponse.status === 403 ? 403 : 502, { status: 'failed', retrySafe: true, paymentId: payment.id, error: scopeError ? 'La clé SasPay ne possède pas le scope payin requis. Vérifiez les permissions du compte marchand.' : 'SasPay a refusé la création de session. Vérifiez le compte avant de réessayer.' });
   }
   if (!providerResponse.ok || !providerBody) return needsReview({ error: 'provider_server_result_uncertain', provider_http_status: providerResponse.status });
 
@@ -133,10 +152,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const validCheckoutUrl = (() => { try { const url = new URL(checkoutUrl); return url.protocol === 'https:' && url.hostname === 'pay.saspay.me'; } catch { return false; } })();
   if (!sessionId || !validCheckoutUrl) return needsReview({ error: 'incomplete_provider_success_response', provider_http_status: providerResponse.status, returned_session_id: rawSessionId.slice(0, 100) }, sessionId || undefined);
 
-  const { error: updateError } = await admin.from('payments').update({ status: 'pending', provider_session_id: sessionId, checkout_url: checkoutUrl, provider_data: { provider_status: typeof providerBody.status === 'string' ? providerBody.status : 'PENDING' } }).eq('id', payment.id);
+  const { data: savedPayment, error: updateError } = await admin.from('payments')
+    .update({ status: 'pending', provider_session_id: sessionId, checkout_url: checkoutUrl, provider_data: { provider_status: typeof providerBody.status === 'string' ? providerBody.status : 'PENDING' } })
+    .eq('id', payment.id).eq('status', 'creating').select('id').maybeSingle();
   if (updateError) {
     console.error('SasPay session stored incompletely', { paymentId: payment.id, sessionId, error: updateError.message });
     return sendJson(res, 202, { status: 'needs_admin_review', paymentId: payment.id, error: 'La session a été créée mais ne peut pas encore être liée au compte. Ne payez pas ; un administrateur doit vérifier la tentative.' });
+  }
+  if (!savedPayment) {
+    const current = await admin.from('payments').select('status,provider_session_id,checkout_url').eq('id', payment.id).maybeSingle();
+    if (current.data?.status === 'paid') return sendJson(res, 200, { status: 'paid', paymentId: payment.id, error: 'Paiement confirmé par SasPay.' });
+    if (current.data?.status === 'pending' && current.data.provider_session_id === sessionId && current.data.checkout_url === checkoutUrl) {
+      return sendJson(res, 200, { checkoutUrl, sessionId, reused: true });
+    }
+    return sendJson(res, 202, { status: 'needs_admin_review', paymentId: payment.id, sessionId, error: 'La tentative a changé d’état pendant la création. Vérifiez son statut avant tout nouveau paiement.' });
   }
   return sendJson(res, 200, { checkoutUrl, sessionId, reused: false });
 }

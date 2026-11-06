@@ -14,16 +14,18 @@ import { CourierEarningsPanel, MerchantAnalyticsPanel } from '../../features/sub
 import { CourierPreferenceSettings } from '../../features/subscriptions/CourierPreferenceSettings';
 import { EmptyState, SetupNotice } from '../../components/ui/Callout';
 import { ProductCard } from '../../components/products/ProductCard';
+import { ClientServiceRequestsPanel } from './ServiceRequestsPanel';
 
 const labels: Record<string, string> = {
-  dashboard: 'Vue d’ensemble', orders: 'Mes commandes', favorites: 'Mes favoris', addresses: 'Mes adresses',
+  dashboard: 'Vue d’ensemble', orders: 'Mes commandes', favorites: 'Mes favoris', addresses: 'Mes adresses', 'service-requests': 'Mes demandes de devis',
   messages: 'Messages', deliveries: 'Livraisons', reviews: 'Avis clients', notifications: 'Notifications',
   shop: 'Ma boutique', products: 'Produits', analytics: 'Statistiques', business: 'FasoFlow Business', intelligence: 'FasoFlow Intelligence', subscription: 'Abonnement',
   settings: 'Mon profil', history: 'Historique des courses', earnings: 'Mes revenus', users: 'Utilisateurs',
   shops: 'Boutiques', reports: 'Signalements', cart: 'Mon panier',
 };
 interface Summary { orders: number; favorites: number; products: number; deliveries: number; users: number; shops: number; payments: number }
-interface RecentRow { id: string; status: string; total_xof?: number; fee_xof?: number; created_at: string }
+interface OrderLineSnapshot { product_name_snapshot: string; quantity: number; condition_snapshot?: Product['condition']; sale_mode_snapshot?: Product['sale_mode']; minimum_order_quantity_snapshot?: number | null; lead_time_days_snapshot?: number | null }
+interface RecentRow { id: string; status: string; payment_status?: string; total_xof?: number; fee_xof?: number; created_at: string; order_items?: OrderLineSnapshot[] }
 
 export function DashboardPage({ role }: { role: AppRole }) {
   const { section = 'dashboard' } = useParams();
@@ -41,7 +43,7 @@ export function DashboardPage({ role }: { role: AppRole }) {
         const [orders, favorites, recentOrders] = await Promise.all([
           supabase!.from('orders').select('*', { count: 'exact', head: true }).eq('customer_id', user.id),
           supabase!.from('favorites').select('*', { count: 'exact', head: true }).eq('user_id', user.id),
-          supabase!.from('orders').select('id,status,total_xof,created_at').eq('customer_id', user.id).order('created_at', { ascending: false }).limit(5),
+          supabase!.from('orders').select('id,status,payment_status,total_xof,created_at').eq('customer_id', user.id).order('created_at', { ascending: false }).limit(5),
         ]);
         next.orders = orders.count ?? 0; next.favorites = favorites.count ?? 0;
         if (mounted) setRecent((recentOrders.data as RecentRow[] | null) ?? []);
@@ -51,7 +53,7 @@ export function DashboardPage({ role }: { role: AppRole }) {
           const [products, orders, recentOrders] = await Promise.all([
             supabase!.from('products').select('*', { count: 'exact', head: true }).eq('shop_id', shop.data.id),
             supabase!.from('orders').select('*', { count: 'exact', head: true }).eq('shop_id', shop.data.id),
-            supabase!.from('orders').select('id,status,total_xof,created_at').eq('shop_id', shop.data.id).order('created_at', { ascending: false }).limit(5),
+            supabase!.from('orders').select('id,status,payment_status,total_xof,created_at').eq('shop_id', shop.data.id).order('created_at', { ascending: false }).limit(5),
           ]);
           next.products = products.count ?? 0; next.orders = orders.count ?? 0;
           if (mounted) setRecent((recentOrders.data as RecentRow[] | null) ?? []);
@@ -80,6 +82,7 @@ export function DashboardPage({ role }: { role: AppRole }) {
   if (!isSupabaseConfigured) return <div className="space-y-5"><h2 className="font-display text-2xl font-extrabold">{labels[section] ?? 'Mon espace'}</h2><SetupNotice /><p className="text-sm text-faso-muted">Les informations personnelles, commandes, ventes et courses ne sont pas simulées. Elles s’afficheront après connexion à votre projet Supabase.</p></div>;
   const title = labels[section] ?? 'Mon espace';
   if (section === 'messages') return <ChatPanel />;
+  if (section === 'service-requests' && role === 'client') return <ClientServiceRequestsPanel />;
   if (section === 'subscription') return <SubscriptionPanel role={role} />;
   if (section === 'cart' && role === 'client') return <CartPanel />;
   if (section === 'orders' && role === 'merchant') return <MerchantOrdersPanel />;
@@ -121,16 +124,17 @@ function OrdersPanel({ role, title }: { role: AppRole; title: string }) {
       if (role === 'merchant') {
         const shop = await supabase!.from('shops').select('id').eq('owner_id', user.id).maybeSingle();
         if (!shop.data?.id) return setRows([]);
-        const result = await supabase!.from(table).select('*').eq('shop_id', shop.data.id).order('created_at', { ascending: false }).limit(50);
+        const result = await supabase!.from(table).select('id,status,payment_status,total_xof,created_at,order_items(*)').eq('shop_id', shop.data.id).order('created_at', { ascending: false }).limit(50);
         setRows((result.data as RecentRow[] | null) ?? []); return;
       }
       const column = role === 'courier' ? 'courier_id' : 'customer_id';
-      const result = await supabase!.from(table).select('*').eq(column, user.id).order('created_at', { ascending: false }).limit(50);
+      const selection = role === 'courier' ? '*' : 'id,status,payment_status,total_xof,created_at,order_items(*)';
+      const result = await supabase!.from(table).select(selection).eq(column, user.id).order('created_at', { ascending: false }).limit(50);
       setRows((result.data as RecentRow[] | null) ?? []);
     };
     void load();
   }, [role, user]);
-  return <section><h2 className="font-display text-2xl font-extrabold">{title}</h2><p className="mt-2 text-sm text-faso-muted">Statuts affichés depuis les enregistrements FasoFlow.</p><div className="mt-6">{rows.length ? <div className="overflow-x-auto rounded-3xl border border-faso-line bg-white"><table className="w-full min-w-[560px] text-left text-sm"><thead className="bg-faso-ivory text-xs uppercase text-faso-muted"><tr><th className="p-4">Référence</th><th className="p-4">Date</th><th className="p-4">Statut</th><th className="p-4 text-right">Montant</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id} className="border-t border-faso-line"><td className="p-4 font-bold">#{row.id.slice(0, 8)}</td><td className="p-4 text-faso-muted">{formatDate(row.created_at)}</td><td className="p-4"><span className="badge-soft">{statusLabels[row.status] ?? row.status}</span></td><td className="p-4 text-right font-bold">{formatXof(row.total_xof ?? row.fee_xof ?? 0)}</td></tr>)}</tbody></table></div> : <EmptyState title="Aucun enregistrement"><p>Votre activité apparaîtra ici dès qu’une commande ou une course sera créée.</p></EmptyState>}</div></section>;
+  return <section><h2 className="font-display text-2xl font-extrabold">{title}</h2><p className="mt-2 text-sm text-faso-muted">Le paiement reste distinct du statut de préparation ou de livraison.</p><div className="mt-6">{rows.length ? <div className="overflow-x-auto rounded-3xl border border-faso-line bg-white"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-faso-ivory text-xs uppercase text-faso-muted"><tr><th className="p-4">Référence / articles</th><th className="p-4">Date</th><th className="p-4">Commande</th>{role !== 'courier' && <th className="p-4">Paiement</th>}<th className="p-4 text-right">Montant</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id} className="border-t border-faso-line"><td className="p-4"><p className="font-bold">#{row.id.slice(0, 8)}</p>{row.order_items?.map((item, index) => <p key={`${row.id}-${index}`} className="mt-1 text-xs text-faso-muted">{item.quantity} × {item.product_name_snapshot}{item.condition_snapshot ? ` · ${item.condition_snapshot === 'used' ? 'Occasion' : item.condition_snapshot === 'refurbished' ? 'Reconditionné' : 'Neuf'}` : ''}{item.sale_mode_snapshot === 'wholesale' ? ` · Gros (min. ${item.minimum_order_quantity_snapshot ?? '—'})` : item.sale_mode_snapshot === 'made_to_order' ? ` · Sur commande${item.lead_time_days_snapshot == null ? '' : ` · ${item.lead_time_days_snapshot} j`}` : ''}</p>)}</td><td className="p-4 text-faso-muted">{formatDate(row.created_at)}</td><td className="p-4"><span className="badge-soft">{statusLabels[row.status] ?? row.status}</span></td>{role !== 'courier' && <td className="p-4"><span className="badge-soft">{statusLabels[row.payment_status ?? 'unpaid'] ?? row.payment_status ?? 'Non payé'}</span></td>}<td className="p-4 text-right font-bold">{formatXof(row.total_xof ?? row.fee_xof ?? 0)}</td></tr>)}</tbody></table></div> : <EmptyState title="Aucun enregistrement"><p>Votre activité apparaîtra ici dès qu’une commande ou une course sera créée.</p></EmptyState>}</div></section>;
 }
 
 function FavoritesPanel({ userId }: { userId: string }) {
@@ -155,12 +159,12 @@ function ProfileSettings() {
 
 function MerchantOrdersPanel() {
   const { user } = useAuth();
-  const [orders, setOrders] = useState<{ id: string; status: string; total_xof: number; created_at: string }[]>([]);
+  const [orders, setOrders] = useState<{ id: string; status: string; payment_status: string; total_xof: number; created_at: string; order_items?: OrderLineSnapshot[] }[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
-  const refresh = useCallback(async () => { if (!supabase || !user) return; const { data: shop } = await supabase.from('shops').select('id').eq('owner_id', user.id).maybeSingle(); if (!shop) { setOrders([]); return; } const { data, error } = await supabase.from('orders').select('id,status,total_xof,created_at').eq('shop_id', shop.id).order('created_at', { ascending: false }).limit(60); if (error) toast.error(error.message); else setOrders(data ?? []); }, [user]);
+  const refresh = useCallback(async () => { if (!supabase || !user) return; const { data: shop } = await supabase.from('shops').select('id').eq('owner_id', user.id).maybeSingle(); if (!shop) { setOrders([]); return; } const { data, error } = await supabase.from('orders').select('id,status,payment_status,total_xof,created_at,order_items(*)').eq('shop_id', shop.id).order('created_at', { ascending: false }).limit(60); if (error) toast.error(error.message); else setOrders((data as unknown as typeof orders) ?? []); }, [user]);
   useEffect(() => { void refresh(); }, [refresh]);
   async function move(id: string, next: string) { if (!supabase) return; setBusy(id); const { error } = await supabase.rpc('merchant_update_order_status', { p_order_id: id, p_status: next }); setBusy(null); if (error) toast.error(error.message); else { toast.success('Statut de commande mis à jour.'); await refresh(); } }
-  return <section><h2 className="font-display text-2xl font-extrabold">Commandes de la boutique</h2><p className="mt-2 text-sm text-faso-muted">Chaque transition est vérifiée côté base. La commande et son paiement sont deux statuts distincts.</p><div className="mt-5 grid gap-3">{orders.length ? orders.map((order) => <article key={order.id} className="card-surface flex flex-wrap items-center justify-between gap-4 p-5"><div><p className="font-bold">Commande #{order.id.slice(0, 8)}</p><p className="mt-1 text-xs text-faso-muted">{formatDate(order.created_at)} · {formatXof(order.total_xof)} · {statusLabels[order.status] ?? order.status}</p></div><div className="flex flex-wrap gap-2">{order.status === 'pending' && <><button disabled={busy === order.id} className="btn-primary !min-h-9 !px-3 !py-2" onClick={() => void move(order.id,'accepted')}>Accepter</button><button disabled={busy === order.id} className="btn-secondary !min-h-9 !px-3 !py-2" onClick={() => void move(order.id,'cancelled')}>Refuser</button></>}{order.status === 'accepted' && <button disabled={busy === order.id} className="btn-primary !min-h-9 !px-3 !py-2" onClick={() => void move(order.id,'preparing')}>Préparer</button>}{order.status === 'preparing' && <button disabled={busy === order.id} className="btn-primary !min-h-9 !px-3 !py-2" onClick={() => void move(order.id,'ready_for_delivery')}>Prête pour livraison</button>}{order.status === 'ready_for_delivery' && <span className="badge-soft self-center">En attente d’un livreur</span>}{order.status === 'in_delivery' && <span className="badge-soft self-center">Livraison en cours</span>}</div></article>) : <EmptyState title="Aucune commande reçue"><p>Les commandes déposées auprès de votre boutique apparaîtront ici.</p></EmptyState>}</div></section>;
+  return <section><h2 className="font-display text-2xl font-extrabold">Commandes de la boutique</h2><p className="mt-2 text-sm text-faso-muted">Le paiement est affiché séparément ; accepter ou préparer une commande ne confirme jamais un encaissement.</p><div className="mt-5 grid gap-3">{orders.length ? orders.map((order) => <article key={order.id} className="card-surface flex flex-wrap items-center justify-between gap-4 p-5"><div><p className="font-bold">Commande #{order.id.slice(0, 8)}</p><p className="mt-1 text-xs text-faso-muted">{formatDate(order.created_at)} · {formatXof(order.total_xof)} · Commande : {statusLabels[order.status] ?? order.status}</p><p className="mt-2 text-xs font-semibold text-faso-forest">Paiement : {statusLabels[order.payment_status] ?? order.payment_status}</p>{order.order_items?.map((item, index) => <p key={`${order.id}-${index}`} className="mt-1 text-xs text-faso-muted">{item.quantity} × {item.product_name_snapshot}{item.condition_snapshot ? ` · ${item.condition_snapshot === 'used' ? 'Occasion' : item.condition_snapshot === 'refurbished' ? 'Reconditionné' : 'Neuf'}` : ''}{item.sale_mode_snapshot === 'wholesale' ? ` · Gros (min. ${item.minimum_order_quantity_snapshot ?? '—'})` : item.sale_mode_snapshot === 'made_to_order' ? ` · Sur commande${item.lead_time_days_snapshot == null ? '' : ` · ${item.lead_time_days_snapshot} j`}` : ''}</p>)}</div><div className="flex flex-wrap gap-2">{order.status === 'pending' && <><button disabled={busy === order.id} className="btn-primary !min-h-9 !px-3 !py-2" onClick={() => void move(order.id,'accepted')}>Accepter</button><button disabled={busy === order.id} className="btn-secondary !min-h-9 !px-3 !py-2" onClick={() => void move(order.id,'cancelled')}>Refuser</button></>}{order.status === 'accepted' && <button disabled={busy === order.id} className="btn-primary !min-h-9 !px-3 !py-2" onClick={() => void move(order.id,'preparing')}>Préparer</button>}{order.status === 'preparing' && <button disabled={busy === order.id} className="btn-primary !min-h-9 !px-3 !py-2" onClick={() => void move(order.id,'ready_for_delivery')}>Prête pour livraison</button>}{order.status === 'ready_for_delivery' && <span className="badge-soft self-center">En attente d’un livreur</span>}{order.status === 'in_delivery' && <span className="badge-soft self-center">Livraison en cours</span>}</div></article>) : <EmptyState title="Aucune commande reçue"><p>Les commandes déposées auprès de votre boutique apparaîtront ici.</p></EmptyState>}</div></section>;
 }
 
 function NotificationsPanel() {

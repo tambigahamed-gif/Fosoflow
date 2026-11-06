@@ -9,5 +9,7 @@ export function useAuth() {
 }
 
 export function roleHome(role: AppRole) {
-  return role === 'admin' ? '/admin/dashboard' : `/${role}/dashboard`;
+  if (role === 'admin') return '/admin/dashboard';
+  if (role === 'service_provider') return '/provider/dashboard';
+  return `/${role}/dashboard`;
 }

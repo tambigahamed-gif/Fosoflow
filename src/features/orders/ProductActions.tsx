@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { useAuth } from '../../app/auth';
 import { supabase } from '../../lib/supabase';
 import type { Product } from '../../types';
+import { minimumOrderQuantity, orderRuleError } from '../marketplace/product-rules';
 
 type CartItem = { id: string; quantity: number };
 const CART_KEY = 'fasoflow-cart';
@@ -20,7 +21,11 @@ export function ProductActions({ product }: { product: Product }) {
     try {
       const current = JSON.parse(localStorage.getItem(CART_KEY) ?? '[]') as CartItem[];
       const found = current.find((item) => item.id === product.id);
-      const next = found ? current.map((item) => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item) : [...current, { id: product.id, quantity: 1 }];
+      const minimum = minimumOrderQuantity(product);
+      const quantity = Math.max(minimum, (found?.quantity ?? 0) + 1);
+      const validation = orderRuleError(product, quantity);
+      if (validation) { toast.error(validation); return; }
+      const next = found ? current.map((item) => item.id === product.id ? { ...item, quantity } : item) : [...current, { id: product.id, quantity }];
       localStorage.setItem(CART_KEY, JSON.stringify(next));
       toast.success('Ajouté au panier.');
       navigate('/client/cart');
@@ -40,5 +45,7 @@ export function ProductActions({ product }: { product: Product }) {
     if (favorite) { const { error } = await supabase.from('favorites').delete().eq('user_id', user.id).eq('product_id', product.id); if (error) toast.error(error.message); else { setFavorite(false); toast.success('Retiré de vos favoris.'); } }
     else { const { error } = await supabase.from('favorites').insert({ user_id: user.id, product_id: product.id }); if (error) toast.error('Impossible d’ajouter ce produit aux favoris.'); else { setFavorite(true); toast.success('Ajouté à vos favoris.'); } }
   }
-  return <div className="mt-7 grid gap-3 sm:grid-cols-3"><button disabled={product.stock_quantity < 1} onClick={addToCart} className="btn-primary"><ShoppingBag className="h-4 w-4" />Ajouter au panier</button>{product.shops?.id ? <button onClick={() => void messageSeller()} className="btn-secondary"><MessageCircle className="h-4 w-4" />Contacter la boutique</button> : <Link to="/login" className="btn-secondary">Connexion</Link>}<button onClick={() => void toggleFavorite()} className="btn-secondary"><Heart className={`h-4 w-4 ${favorite ? 'fill-faso-terracotta text-faso-terracotta' : ''}`} />{favorite ? 'Favori' : 'Enregistrer'}</button></div>;
+  const minimum = minimumOrderQuantity(product);
+  const canOrder = product.sale_mode === 'made_to_order' || product.stock_quantity >= minimum;
+  return <div className="mt-7 grid gap-3 sm:grid-cols-3"><button disabled={!canOrder} onClick={addToCart} className="btn-primary"><ShoppingBag className="h-4 w-4" />{canOrder ? minimum > 1 ? `Ajouter · min. ${minimum}` : 'Ajouter au panier' : 'Stock insuffisant'}</button>{product.shops?.id ? <button onClick={() => void messageSeller()} className="btn-secondary"><MessageCircle className="h-4 w-4" />Contacter la boutique</button> : <Link to="/login" className="btn-secondary">Connexion</Link>}<button onClick={() => void toggleFavorite()} className="btn-secondary"><Heart className={`h-4 w-4 ${favorite ? 'fill-faso-terracotta text-faso-terracotta' : ''}`} />{favorite ? 'Favori' : 'Enregistrer'}</button></div>;
 }

@@ -1,16 +1,16 @@
 # FasoFlow
 
-Marketplace SaaS en français destinée au Burkina Faso : clients, commerçants et livreurs ; montants en XOF/FCFA. Stack : React 18, TypeScript strict, Vite, Tailwind, Supabase Auth/PostgreSQL/Storage/Realtime et fonctions server-side Vercel.
+Marketplace SaaS en français destinée au Burkina Faso : clients, commerçants, livreurs et prestataires ; montants en XOF/FCFA. Stack : React 18, TypeScript strict, Vite, Tailwind, Supabase Auth/PostgreSQL/Storage/Realtime et fonctions server-side Vercel.
 
 Le marché actif est centralisé dans `src/lib/market.ts` (Burkina Faso, `BF`, XOF, français, `Africa/Ouagadougou`). Cette structure prépare l’ajout futur de marchés sans activer de pays ou devise non validés.
 
 ## État actuel et limites
 
-L’application comprend le parcours marketplace, les espaces à rôles, FasoFlow Business et FasoFlow Intelligence. Le catalogue public distingue maintenant une liste réellement vide d’une erreur API et propose les filtres disponibles. Au dernier contrôle public, la base ne contenait aucune boutique ni aucun produit visible ; aucune annonce factice n’est ajoutée. Un commerçant doit créer sa boutique et ses annonces, puis celles-ci doivent être approuvées selon le workflow de modération.
+L’application comprend le marché produits, les espaces client/commerçant/livreur/admin, FasoFlow Business, FasoFlow Intelligence et l’extension du marché des services. Le catalogue public distingue maintenant une liste réellement vide d’une erreur API et propose les filtres disponibles. Au dernier contrôle public, la base ne contenait aucune boutique ni aucun produit visible ; aucune annonce factice n’est ajoutée. Un commerçant doit créer sa boutique et ses annonces, puis celles-ci doivent être approuvées selon le workflow de modération.
 
 Les requêtes de diagnostic précédentes ont identifié les endpoints Supabase et confirmé que plusieurs données sensibles refusent les accès anonymes. Elles ne permettent pas de confirmer l’historique des migrations, les règles RLS pour chaque rôle ou la présence de l’instance exacte du schéma. L’accès administrateur Supabase n’est pas disponible ici. Ne lancez pas les migrations sur la base connectée sans d’abord vérifier son historique et l’état réel de ses tables/politiques.
 
-Cette mission a modifié uniquement les fichiers du dépôt local : aucune variable d’environnement réelle, donnée, migration en base, publication GitHub ou version Vercel n’a été changée. Les pages Conditions et Confidentialité restent des brouillons à compléter par l’exploitant (identité officielle, coordonnées, durées, droits et règles applicables) avant une ouverture publique définitive.
+Les fichiers de cette vague sont encore locaux à ce stade : aucune variable d’environnement réelle, donnée ou migration Supabase n’a été changée. L’utilisateur a explicitement autorisé le push GitHub et l’auto-déploiement Vercel ; leur résultat sera confirmé séparément, sans appliquer la migration 015. Les pages Conditions et Confidentialité restent des brouillons à compléter par l’exploitant (identité officielle, coordonnées, durées, droits et règles applicables) avant une ouverture publique définitive.
 
 ## SasPay et abonnements
 
@@ -38,6 +38,10 @@ FasoFlow Intelligence est incluse dans l’offre Business existante et l’écra
 
 Le formulaire public transmet désormais ses données à `/api/contact` au lieu d’effectuer une insertion Supabase directe depuis le navigateur. Le serveur valide les champs, traite un honeypot et applique une limite persistante par empreintes HMAC d’adresse réseau/e-mail. La migration additive `014_contact_rate_limit.sql` retire l’insertion anonyme directe et crée la fonction SQL accessible seulement à `service_role`. Cette protection complète devient opérationnelle après application autorisée de la migration 014 et configuration serveur Supabase. Elle n’a pas été appelée en production pendant cette mission.
 
+## Services et prestataires
+
+Le catalogue `/services` et les profils `/providers/:id` sont lus depuis Supabase ; seules les prestations actives et les fiches prestataires approuvées sont présentées. Les demandes de devis sont liées aux conversations existantes. Le client accepte ou décline un devis, confirme ensuite la prestation terminée et peut laisser un avis modéré ; le prestataire gère son profil, ses annonces, ses demandes et ses réponses. Aucun paiement, réservation automatique ou abonnement prestataire n’est simulé. La migration locale `015_marketplace_services_and_product_modes.sql` ajoute ce schéma et étend produits/commandes ; tant qu’elle n’est pas appliquée après vérification et autorisation, l’interface indique explicitement que les nouvelles fonctions nécessitent cette migration.
+
 ## Installation locale
 
 Prérequis : Node.js 20+ et la version pnpm verrouillée dans `package.json`.
@@ -52,9 +56,9 @@ pnpm dev
 
 ## Supabase et migrations
 
-Consulter [`supabase/README_MIGRATIONS.md`](supabase/README_MIGRATIONS.md) avant tout SQL. Les migrations `001`–`012` constituent le schéma historique ; `013` étend Business et `014` protège le formulaire Contact. L’existence de tables déjà joignables par PostgREST ne prouve pas que chaque version du schéma ou chaque migration correspond au dépôt. Vérifier d’abord le projet, l’historique et les objets présents ; appliquer seulement les migrations manquantes, compatibles et expressément autorisées, une à la fois. Il n’est pas nécessaire de disposer de `SUPABASE_DB_URL` pour utiliser le SQL Editor, mais cette méthode ne rend pas sûre une exécution aveugle.
+Consulter [`supabase/README_MIGRATIONS.md`](supabase/README_MIGRATIONS.md) avant tout SQL. Les migrations `001`–`012` constituent le schéma historique ; `013` étend Business, `014` protège le formulaire Contact et `015` prépare les services et attributs produits. L’existence de tables déjà joignables par PostgREST ne prouve pas que chaque version du schéma ou chaque migration correspond au dépôt. Vérifier d’abord le projet, l’historique et les objets présents ; appliquer seulement les migrations manquantes, compatibles et expressément autorisées, une à la fois. Il n’est pas nécessaire de disposer de `SUPABASE_DB_URL` pour utiliser le SQL Editor, mais cette méthode ne rend pas sûre une exécution aveugle.
 
-La migration 013 suppose le schéma et les fonctions présents après la base 001–012. La migration 014 suppose `contact_messages` et la politique nommée définie dans 002 ; elle révoque l’insertion publique sans supprimer les messages existants. Les deux nouveaux fichiers sont uniquement locaux dans cette mission et n’ont pas été exécutés en base.
+La migration 013 suppose le schéma et les fonctions présents après la base 001–012. La migration 014 suppose `contact_messages` et la politique nommée définie dans 002 ; elle révoque l’insertion publique sans supprimer les messages existants. Les migrations 013–015 sont uniquement locales et n’ont pas été exécutées en base.
 
 ## Tests et contrôles locaux
 
@@ -69,11 +73,11 @@ Les tests Business et SasPay utilisent des fonctions pures et n’appellent pas 
 
 ## Mise en service future — intervention/autorisation requise
 
-1. Dans Supabase, vérifier la référence du projet, l’état exact du schéma, les migrations exécutées et les politiques avant tout SQL ; prendre une sauvegarde vérifiée. Pour `013` et `014`, obtenir une autorisation distincte et appliquer selon le guide.
+1. Dans Supabase, vérifier la référence du projet, l’état exact du schéma, les migrations exécutées et les politiques avant tout SQL ; prendre une sauvegarde vérifiée. Pour `013`, `014` et `015`, vérifier les préconditions et obtenir une autorisation distincte avant application.
 2. Dans SasPay, finaliser le KYC, confirmer sur le compte marchand le scope `PAYIN` et les réseaux XOF activés (le répertoire public liste BF actif/XOF, ce qui ne suffit pas à prouver l’activation marchand), créer une clé test serveur, puis créer un webhook `transaction.success` et copier immédiatement son `signing_secret` dans le secret Vercel `SASPAY_WEBHOOK_SIGNING_SECRET`. Ne jamais utiliser la clé API comme secret de signature. Tester signatures valides/invalide, statuts et rapprochement avec un checkout de test.
 3. Si l’IA est souhaitée, sélectionner et autoriser le fournisseur, modèle et endpoint HTTPS, puis ajouter les valeurs facultatives au seul environnement serveur. Sans cela, l’écran reste désactivé sans résultat inventé.
 4. Vérifier les secrets Vercel existants sans les exposer, confirmer les protections RLS et le formulaire après migrations, vérifier le rendu PWA/mobile et les parcours authentifiés.
-5. Cette version locale n’a pas été poussée sur GitHub ni déployée sur Vercel. Demander séparément l’autorisation avant toute action susceptible de déclencher une publication ou de modifier l’environnement de production.
+5. L’utilisateur a autorisé le push vers le dépôt GitHub FasoFlow et le déclenchement de son auto-déploiement Vercel. Ne déclarer ces opérations terminées qu’après preuve de la mise à jour de `main` et du statut de déploiement. Les migrations Supabase restent locales et aucune donnée/configuration de production n’est modifiée.
 
 ## Répertoires
 
@@ -81,5 +85,5 @@ Les tests Business et SasPay utilisent des fonctions pures et n’appellent pas 
 - `src/features/business/`, `src/features/intelligence/` : calculs, données, contrats et interface de gestion/IA.
 - `src/features/`, `src/lib/`, `src/types/`, `src/styles/` : marketplace, abonnements, Supabase navigateur, utilitaires, types et styles.
 - `api/payments/`, `api/intelligence/`, `api/contact.ts`, `api/_lib/` : fonctions serverless Vercel et accès server-only.
-- `supabase/migrations/` : migrations SQL historiques 001–012 et additions locales 013–014.
+- `supabase/migrations/` : migrations SQL historiques 001–012 et additions locales 013–015.
 - `public/` : identité officielle, routes, manifeste PWA et ressources publiques.

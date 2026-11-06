@@ -1,4 +1,4 @@
-export type AppRole = 'client' | 'merchant' | 'courier' | 'admin';
+export type AppRole = 'client' | 'merchant' | 'courier' | 'service_provider' | 'admin';
 
 export interface Profile {
   id: string;
@@ -32,6 +32,10 @@ export interface Product {
   stock_quantity: number;
   image_url: string | null;
   status: 'pending_review' | 'active' | 'rejected' | 'archived';
+  condition?: 'new' | 'used' | 'refurbished' | null;
+  sale_mode?: 'retail' | 'wholesale' | 'made_to_order' | null;
+  minimum_order_quantity?: number | null;
+  lead_time_days?: number | null;
   created_at: string;
   shops?: Pick<Shop, 'id' | 'name' | 'city' | 'logo_url'> | null;
   categories?: Pick<Category, 'name' | 'slug'> | null;
@@ -133,5 +137,59 @@ export interface StockMovement {
   quantity_delta: number;
   stock_before: number;
   stock_after: number;
+  created_at: string;
+}
+
+export interface ServiceCategory {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface ServiceProviderProfile {
+  user_id: string;
+  display_name: string;
+  bio: string;
+  city: string;
+  service_area: string[];
+  public_contact_phone: string | null;
+  review_status: 'pending_review' | 'active' | 'suspended' | 'rejected';
+}
+
+export interface ServiceListing {
+  id: string;
+  provider_id: string;
+  category_id: string | null;
+  title: string;
+  description: string;
+  city: string;
+  service_area: string[];
+  price_min_xof: number | null;
+  price_max_xof: number | null;
+  price_unit: string | null;
+  image_urls: string[];
+  status: 'pending_review' | 'active' | 'rejected' | 'archived';
+  created_at: string;
+  service_categories?: Pick<ServiceCategory, 'name' | 'slug'> | null;
+  service_provider_profiles?: Pick<ServiceProviderProfile, 'user_id' | 'display_name' | 'city' | 'bio' | 'service_area' | 'public_contact_phone' | 'review_status'> | null;
+}
+
+export interface ServiceRequest {
+  id: string;
+  service_id: string;
+  client_id: string;
+  provider_id: string;
+  message: string;
+  requested_at: string | null;
+  requested_location: string | null;
+  status: 'requested' | 'quoted' | 'accepted' | 'completed' | 'cancelled' | 'declined';
+  quoted_price_xof: number | null;
+  quote_message: string | null;
+  agreed_at: string | null;
+  agreed_location: string | null;
+  completed_at: string | null;
   created_at: string;
 }

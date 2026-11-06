@@ -2,6 +2,8 @@ import { createBrowserRouter } from 'react-router-dom';
 import { SiteLayout } from '../components/layout/SiteLayout';
 import { ProtectedRoute } from '../features/auth/ProtectedRoute';
 import { HomePage, MarketplacePage, ProductPage, ShopsPage, ShopPage, CategoryPage, PricingPage, LegalPage, ContactPage, NotFoundPage, PaymentReturnPage } from '../pages/public/PublicPages';
+import { ServicesPage, ServicePage, ServiceProviderPage } from '../pages/services/ServicesPages';
+import { ServiceProviderDashboardPage } from '../pages/services/ServiceProviderDashboardPage';
 import { AuthPage } from '../pages/auth/AuthPage';
 import { DashboardPage } from '../pages/client/DashboardPage';
 import { MerchantProductsPage } from '../pages/merchant/MerchantProductsPage';
@@ -20,6 +22,9 @@ export const router = createBrowserRouter([
       { path: 'shops', element: <ShopsPage /> },
       { path: 'shops/:id', element: <ShopPage /> },
       { path: 'categories/:slug', element: <CategoryPage /> },
+      { path: 'services', element: <ServicesPage /> },
+      { path: 'services/:id', element: <ServicePage /> },
+      { path: 'providers/:id', element: <ServiceProviderPage /> },
       { path: 'pricing', element: <PricingPage /> },
       { path: 'login', element: <AuthPage mode="login" /> },
       { path: 'signup', element: <AuthPage mode="signup" /> },
@@ -43,6 +48,9 @@ export const router = createBrowserRouter([
       ]},
       { path: 'courier', element: <ProtectedRoute allowedRoles={['courier']} />, children: [
         { index: true, element: <DashboardPage role="courier" /> }, { path: 'dashboard', element: <DashboardPage role="courier" /> }, { path: 'deliveries', element: <CourierDeliveriesPage /> }, { path: ':section', element: <DashboardPage role="courier" /> },
+      ]},
+      { path: 'provider', element: <ProtectedRoute allowedRoles={['service_provider']} />, children: [
+        { index: true, element: <ServiceProviderDashboardPage /> }, { path: 'dashboard', element: <ServiceProviderDashboardPage /> }, { path: 'services', element: <ServiceProviderDashboardPage /> }, { path: 'requests', element: <ServiceProviderDashboardPage /> }, { path: 'profile', element: <ServiceProviderDashboardPage /> }, { path: 'messages', element: <ServiceProviderDashboardPage /> },
       ]},
       { path: 'admin', element: <ProtectedRoute allowedRoles={['admin']} />, children: [
         { index: true, element: <DashboardPage role="admin" /> }, { path: 'dashboard', element: <DashboardPage role="admin" /> }, { path: 'payments', element: <AdminPaymentsPage /> }, { path: ':section', element: <AdminOperationsPage /> },

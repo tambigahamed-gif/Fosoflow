@@ -7,6 +7,7 @@ import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { formatXof } from '../../lib/utils';
 import type { MerchantProduct, Product, Shop } from '../../types';
 import { checkMerchantBusinessAccess } from '../../features/business/access';
+import { isMissingProductModesMigration, productConditionLabel, productModeLabel } from '../../features/marketplace/product-rules';
 
 function missingCostTable(message: string) {
   return /product_costs|order_item_costs|business_expenses|stock_movements/i.test(message)
@@ -23,6 +24,12 @@ export function MerchantProductsPage() {
   const [editing, setEditing] = useState<MerchantProduct | null>(null);
   const [busy, setBusy] = useState(false);
   const [costTableMissing, setCostTableMissing] = useState(false);
+  const [productModesAvailable, setProductModesAvailable] = useState(false);
+  const [productModesMissing, setProductModesMissing] = useState(false);
+  const [condition, setCondition] = useState<Product['condition']>('new');
+  const [saleMode, setSaleMode] = useState<Product['sale_mode']>('retail');
+  const [minimumQuantity, setMinimumQuantity] = useState(1);
+  const [leadTimeDays, setLeadTimeDays] = useState('');
   const [businessAccess, setBusinessAccess] = useState<'loading' | 'allowed' | 'locked' | 'error'>('loading');
 
   useEffect(() => {
@@ -42,6 +49,10 @@ export function MerchantProductsPage() {
       if (shopResult.error) toast.error(`Boutique impossible à charger : ${shopResult.error.message}`);
       setShop(shopResult.data as Shop | null);
       setCategories((categoryResult.data as { id: string; name: string }[] | null) ?? []);
+      const modesCheck = await supabase!.from('products').select('condition,sale_mode,minimum_order_quantity,lead_time_days').limit(1);
+      if (!live) return;
+      setProductModesAvailable(!modesCheck.error);
+      setProductModesMissing(Boolean(modesCheck.error && isMissingProductModesMigration(modesCheck.error.message)));
       if (shopResult.data) {
         const result = await supabase!.from('products').select('*').eq('shop_id', shopResult.data.id).order('created_at', { ascending: false });
         if (!live) return;
@@ -91,6 +102,22 @@ export function MerchantProductsPage() {
       toast.error('Le coût d’achat doit être un nombre entier positif en FCFA.');
       return;
     }
+    let advancedFields: Pick<Product, 'condition' | 'sale_mode' | 'minimum_order_quantity' | 'lead_time_days'> | null = null;
+    if (productModesAvailable) {
+      const rawCondition = String(form.get('condition') ?? '');
+      const rawMode = String(form.get('sale_mode') ?? '');
+      const rawMinimum = String(form.get('minimum_order_quantity') ?? '');
+      const rawLeadTime = String(form.get('lead_time_days') ?? '').trim();
+      const parsedMinimum = rawMinimum === '' ? null : Number(rawMinimum);
+      const parsedLeadTime = rawLeadTime === '' ? null : Number(rawLeadTime);
+      if (rawCondition && !['new', 'used', 'refurbished'].includes(rawCondition)) { toast.error('Choisissez un état valide.'); return; }
+      if (rawMode && !['retail', 'wholesale', 'made_to_order'].includes(rawMode)) { toast.error('Choisissez un mode de vente valide.'); return; }
+      if (parsedMinimum !== null && (!Number.isInteger(parsedMinimum) || parsedMinimum < 1 || parsedMinimum > 100)) { toast.error('Le minimum d’achat doit être un entier entre 1 et 100.'); return; }
+      if (rawMode === 'wholesale' && (parsedMinimum === null || parsedMinimum < 2)) { toast.error('Une vente en gros exige un minimum d’au moins 2 unités.'); return; }
+      if (rawMode === 'retail' && parsedMinimum !== 1) { toast.error('La vente au détail utilise une unité comme minimum.'); return; }
+      if (parsedLeadTime !== null && (!Number.isInteger(parsedLeadTime) || parsedLeadTime < 0 || parsedLeadTime > 365)) { toast.error('Le délai doit être un nombre entier compris entre 0 et 365 jours.'); return; }
+      advancedFields = { condition: rawCondition ? rawCondition as Product['condition'] : null, sale_mode: rawMode ? rawMode as Product['sale_mode'] : null, minimum_order_quantity: rawMode ? rawMode === 'retail' ? 1 : parsedMinimum ?? (rawMode === 'wholesale' ? 2 : 1) : null, lead_time_days: parsedLeadTime };
+    }
     const image = form.get('image');
     setBusy(true);
     let imageUrl: string | null = editing?.image_url ?? null;
@@ -112,9 +139,10 @@ export function MerchantProductsPage() {
       image_url: imageUrl,
       status: 'pending_review' as const,
     };
+    const productPayload = productModesAvailable && advancedFields ? { ...payload, ...advancedFields } : payload;
     const result = editing
-      ? await supabase.from('products').update(payload).eq('id', editing.id).select('*').single()
-      : await supabase.from('products').insert(payload).select('*').single();
+      ? await supabase.from('products').update(productPayload).eq('id', editing.id).select('*').single()
+      : await supabase.from('products').insert(productPayload).select('*').single();
     if (result.error) {
       setBusy(false);
       toast.error(`Enregistrement impossible : ${result.error.message}`);
@@ -155,13 +183,14 @@ export function MerchantProductsPage() {
   return <section>
     <div className="flex flex-wrap items-end justify-between gap-4">
       <div><p className="eyebrow">Catalogue</p><h2 className="mt-1 font-display text-2xl font-extrabold">Mes produits</h2><p className="mt-2 text-sm text-faso-muted">Les produits nouveaux ou modifiés sont envoyés à la modération avant publication.</p></div>
-      {shop && <button onClick={() => { setEditing(null); setShowForm(!showForm); }} className="btn-primary"><Plus className="h-4 w-4" />{showForm ? 'Fermer' : 'Ajouter un produit'}</button>}
+      {shop && <button onClick={() => { const next = !showForm; setEditing(null); setCondition('new'); setSaleMode('retail'); setMinimumQuantity(1); setLeadTimeDays(''); setShowForm(next); }} className="btn-primary"><Plus className="h-4 w-4" />{showForm ? 'Fermer' : 'Ajouter un produit'}</button>}
     </div>
     {loading && <div className="mt-6 h-40 animate-pulse rounded-3xl bg-white" />}
     {!loading && !shop && <div className="mt-6 rounded-3xl border border-faso-line bg-white p-6"><div className="mb-5 flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-faso-ivory text-faso-forest"><Store /></span><div><h3 className="font-display text-lg font-extrabold">Créez votre boutique</h3><p className="text-sm text-faso-muted">Commencez votre vitrine FasoFlow.</p></div></div><form className="grid gap-4 sm:grid-cols-2" onSubmit={createShop}><label className="label">Nom de boutique<input name="name" className="field" required maxLength={120} /></label><label className="label">Ville<input name="city" className="field" required maxLength={80} placeholder="Ouagadougou" /></label><label className="label sm:col-span-2">Description<textarea name="description" className="field min-h-24" maxLength={1500} /></label><button disabled={busy} className="btn-primary sm:col-span-2">{busy ? 'Création…' : 'Créer ma boutique'}</button></form></div>}
     {shop && <div className="mt-5 rounded-2xl border border-faso-line bg-white p-4 text-sm"><span className="font-bold">{shop.name}</span><span className="mx-2 text-faso-muted">·</span><span className="capitalize text-faso-muted">Statut : {shop.status.replaceAll('_', ' ')}</span></div>}
     {shop && businessAccess === 'error' && <p role="alert" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">L’offre Business n’a pas pu être vérifiée ; aucun coût d’achat n’est chargé ou modifié. Le CRUD produit reste disponible.</p>}
     {shop && businessAccess === 'allowed' && costTableMissing && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Les coûts d’achat sont conservés dans une table privée, non visible par les clients. La migration Business 013 doit être appliquée pour les enregistrer.</p>}
+    {shop && productModesMissing && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Les champs condition, mode de vente, minimum et délai sont masqués car la migration locale 015 n’est pas appliquée. La gestion des produits existants reste disponible.</p>}
     {shop && showForm && <form onSubmit={createProduct} className="card-surface mt-5 grid gap-4 p-5 sm:grid-cols-2">
       <h3 className="font-display text-lg font-extrabold sm:col-span-2">{editing ? `Modifier ${editing.name}` : 'Nouveau produit'}</h3>
       <label className="label">Nom du produit<input className="field" name="name" required maxLength={160} defaultValue={editing?.name ?? ''} /></label>
@@ -170,10 +199,11 @@ export function MerchantProductsPage() {
       {businessAccess !== 'allowed' && <div className="rounded-xl bg-faso-ivory p-3 text-sm text-faso-muted sm:col-span-2">Les coûts d’achat privés et leur suivi sont réservés à un abonnement commerçant Business actif. Vous pouvez toujours créer et modifier les informations publiques du produit.</div>}
       <label className="label">Stock<input className="field" name="stock_quantity" type="number" min="0" step="1" required defaultValue={editing?.stock_quantity ?? 1} /></label>
       <label className="label">Catégorie<select className="field" name="category_id" defaultValue={editing?.category_id ?? ''}><option value="">Choisir une catégorie</option>{categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      {productModesAvailable && <><label className="label">État du produit<select className="field" name="condition" value={condition ?? ''} onChange={(event) => setCondition((event.target.value || null) as Product['condition'])}><option value="">Non renseigné</option><option value="new">Neuf</option><option value="used">Occasion</option><option value="refurbished">Reconditionné</option></select></label><label className="label">Mode de vente<select className="field" name="sale_mode" value={saleMode ?? ''} onChange={(event) => { const next = event.target.value as Product['sale_mode']; setSaleMode(next || null); if (next === 'retail') setMinimumQuantity(1); else if (next === 'wholesale') setMinimumQuantity((current) => Math.max(2, current)); else if (next === 'made_to_order') setMinimumQuantity((current) => Math.max(1, current)); }}><option value="">Non renseigné (ancienne fiche)</option><option value="retail">Vente au détail</option><option value="wholesale">Vente en gros</option><option value="made_to_order">Sur commande</option></select></label><label className="label">Quantité minimale<input className="field" name="minimum_order_quantity" type="number" min={saleMode === 'wholesale' ? 2 : 1} max="100" step="1" value={minimumQuantity} onChange={(event) => setMinimumQuantity(Number(event.target.value))} disabled={!saleMode} /><span className="mt-1 block text-xs font-normal text-faso-muted">Le gros exige au moins 2 unités. La fabrication sur commande n’est pas limitée par le stock affiché.</span></label><label className="label">Délai indicatif (jours)<input className="field" name="lead_time_days" type="number" min="0" max="365" step="1" value={leadTimeDays} onChange={(event) => setLeadTimeDays(event.target.value)} placeholder="Facultatif" /></label></>}
       <label className="label sm:col-span-2">Description<textarea className="field min-h-24" name="description" maxLength={3000} defaultValue={editing?.description ?? ''} /></label>
       <label className="label sm:col-span-2">Photo du produit<input className="field" name="image" type="file" accept="image/jpeg,image/png,image/webp" /><span className="mt-1 block text-xs font-normal text-faso-muted">JPG, PNG ou WebP · 5 Mo maximum.{editing?.image_url ? ' Une nouvelle photo remplace l’actuelle.' : ''}</span></label>
       <button disabled={busy} className="btn-primary sm:col-span-2">{busy ? 'Enregistrement…' : <><PackagePlus className="h-4 w-4" />{editing ? 'Enregistrer les modifications' : 'Enregistrer le produit'}</>}</button>
     </form>}
-    {shop && !loading && <div className="mt-6">{products.length ? <div className="grid gap-3">{products.map((product) => <article key={product.id} className="flex flex-col gap-4 rounded-2xl border border-faso-line bg-white p-4 sm:flex-row sm:items-center"><div className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-xl bg-faso-ivory text-faso-forest">{product.image_url ? <img src={product.image_url} className="h-full w-full object-cover" alt="" /> : <PackagePlus />}</div><div className="min-w-0 flex-1"><h3 className="font-bold">{product.name}</h3><p className="mt-1 text-xs text-faso-muted">Vente {formatXof(product.price_xof)}{businessAccess === 'allowed' && <> · Achat {product.purchase_cost_xof == null ? 'non renseigné' : formatXof(product.purchase_cost_xof)}</>} · Stock {product.stock_quantity} · <span className="capitalize">{product.status.replaceAll('_', ' ')}</span></p></div><div className="flex gap-2"><button className="btn-secondary !min-h-9 !px-3 !py-2" title="Modifier le produit" onClick={() => { setEditing(product); setShowForm(true); }}><Pencil className="h-4 w-4" /><span className="sr-only">Modifier</span></button><button onClick={() => void archiveProduct(product.id)} className="btn-secondary !min-h-9 !px-3 !py-2 text-faso-terracotta" aria-label={`Archiver ${product.name}`}><Trash2 className="h-4 w-4" /></button></div></article>)}</div> : <EmptyState title="Votre catalogue est prêt à démarrer"><p>Ajoutez votre premier produit. Il sera en attente de modération avant publication.</p></EmptyState>}</div>}
+    {shop && !loading && <div className="mt-6">{products.length ? <div className="grid gap-3">{products.map((product) => <article key={product.id} className="flex flex-col gap-4 rounded-2xl border border-faso-line bg-white p-4 sm:flex-row sm:items-center"><div className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-xl bg-faso-ivory text-faso-forest">{product.image_url ? <img src={product.image_url} className="h-full w-full object-cover" alt="" /> : <PackagePlus />}</div><div className="min-w-0 flex-1"><h3 className="font-bold">{product.name}</h3><p className="mt-1 text-xs text-faso-muted">Vente {formatXof(product.price_xof)}{businessAccess === 'allowed' && <> · Achat {product.purchase_cost_xof == null ? 'non renseigné' : formatXof(product.purchase_cost_xof)}</>} · Stock {product.sale_mode === 'made_to_order' ? 'sur commande' : product.stock_quantity}{product.condition ? ` · ${productConditionLabel(product.condition)}` : ''}{product.sale_mode ? ` · ${productModeLabel(product.sale_mode)}${product.sale_mode === 'wholesale' ? ` (min. ${product.minimum_order_quantity ?? 2})` : ''}` : ''}{product.lead_time_days != null ? ` · délai ${product.lead_time_days} j` : ''} · <span className="capitalize">{product.status.replaceAll('_', ' ')}</span></p></div><div className="flex gap-2"><button className="btn-secondary !min-h-9 !px-3 !py-2" title="Modifier le produit" onClick={() => { setEditing(product); setCondition(product.condition ?? null); setSaleMode(product.sale_mode ?? null); setMinimumQuantity(product.minimum_order_quantity ?? (product.sale_mode === 'wholesale' ? 2 : 1)); setLeadTimeDays(product.lead_time_days == null ? '' : String(product.lead_time_days)); setShowForm(true); }}><Pencil className="h-4 w-4" /><span className="sr-only">Modifier</span></button><button onClick={() => void archiveProduct(product.id)} className="btn-secondary !min-h-9 !px-3 !py-2 text-faso-terracotta" aria-label={`Archiver ${product.name}`}><Trash2 className="h-4 w-4" /></button></div></article>)}</div> : <EmptyState title="Votre catalogue est prêt à démarrer"><p>Ajoutez votre premier produit. Il sera en attente de modération avant publication.</p></EmptyState>}</div>}
   </section>;
 }

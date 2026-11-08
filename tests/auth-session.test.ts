@@ -14,6 +14,8 @@ describe('auth session request guard', () => {
 
   it('allows only safe same-site return paths after authentication', () => {
     expect(safeInternalReturnPath('/boutique/atelier-ouaga')).toBe('/boutique/atelier-ouaga');
+    expect(safeInternalReturnPath('/merchant/products')).toBe('/merchant/products');
+    expect(safeInternalReturnPath('/provider/profile')).toBe('/provider/profile');
     expect(safeInternalReturnPath('/client/messages?conversation=abc')).toBe('/client/messages?conversation=abc');
     expect(safeInternalReturnPath('https://example.com')).toBeNull();
     expect(safeInternalReturnPath('//example.com')).toBeNull();

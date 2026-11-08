@@ -37,7 +37,7 @@ export interface Product {
   minimum_order_quantity?: number | null;
   lead_time_days?: number | null;
   created_at: string;
-  shops?: Pick<Shop, 'id' | 'name' | 'city' | 'logo_url'> | null;
+  shops?: Pick<Shop, 'id' | 'name' | 'city' | 'logo_url'> & { slug?: string } | null;
   categories?: Pick<Category, 'name' | 'slug'> | null;
 }
 

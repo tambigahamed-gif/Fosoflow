@@ -3,6 +3,9 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Eye, EyeOff, Mail, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth, roleHome } from '../../app/auth';
+import { safeInternalReturnPath } from '../../app/session-guard';
+import { LoadingState } from '../../components/ui/Callout';
+import { isMissingServicesMigration } from '../../features/services/service-utils';
 import { supabase } from '../../lib/supabase';
 import type { AppRole } from '../../types';
 
@@ -15,21 +18,35 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
   const [showPassword, setShowPassword] = useState(false);
   const [notice, setNotice] = useState('');
   const [resetComplete, setResetComplete] = useState(false);
-  const { user, profile, loading } = useAuth();
+  const [providerSchemaStatus, setProviderSchemaStatus] = useState<'checking' | 'ready' | 'missing' | 'unavailable'>('checking');
+  const { user, profile, loading, refreshProfile } = useAuth();
   const navigate = useNavigate();
   const requestedRole = search.get('role') as AppRole | null;
+  const nextPath = safeInternalReturnPath(search.get('next'));
   const [role, setRole] = useState<AppRole>(requestedRole && selectableRoles.includes(requestedRole) ? requestedRole : 'client');
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (user && profile && (mode === 'login' || mode === 'confirm')) navigate(roleHome(profile.role), { replace: true });
-  }, [user, profile, mode, navigate]);
+    if (user && profile && (mode === 'login' || mode === 'signup' || mode === 'confirm')) navigate(nextPath ?? roleHome(profile.role), { replace: true });
+  }, [user, profile, mode, navigate, nextPath]);
   useEffect(() => {
     if (mode === 'confirm' && !loading && !user) setNotice('Vérifiez votre boîte e-mail et ouvrez le lien de confirmation reçu.');
   }, [mode, loading, user]);
   useEffect(() => {
     if (mode === 'reset' && !loading && !user) setError('Ce lien de récupération est invalide ou expiré. Demandez un nouveau lien.');
   }, [mode, loading, user]);
+  useEffect(() => {
+    if (mode !== 'signup') return;
+    if (!supabase) { setProviderSchemaStatus('unavailable'); return; }
+    let active = true;
+    setProviderSchemaStatus('checking');
+    void supabase.from('service_provider_profiles').select('user_id').limit(0).then(({ error: schemaError }) => {
+      if (!active) return;
+      if (!schemaError) setProviderSchemaStatus('ready');
+      else setProviderSchemaStatus(isMissingServicesMigration(schemaError.message) ? 'missing' : 'unavailable');
+    }, () => { if (active) setProviderSchemaStatus('unavailable'); });
+    return () => { active = false; };
+  }, [mode]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -46,22 +63,25 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
         if (authError) throw authError;
         const { data: profileRow, error: profileError } = await supabase.from('profiles').select('role').eq('id', data.user.id).maybeSingle();
         if (profileError || !profileRow) throw new Error('Profil introuvable. Confirmez votre e-mail ou contactez l’administrateur.');
-        navigate(roleHome(profileRow.role as AppRole), { replace: true });
+        navigate(nextPath ?? roleHome(profileRow.role as AppRole), { replace: true });
       } else if (mode === 'signup') {
         const fullName = String(form.get('full_name') ?? '').trim();
         const phone = String(form.get('phone') ?? '').trim();
         if (!selectableRoles.includes(role)) throw new Error('Choisissez un rôle disponible.');
+        if (role === 'service_provider' && providerSchemaStatus !== 'ready') {
+          throw new Error(providerSchemaStatus === 'missing' ? 'La migration locale 015 doit être vérifiée puis appliquée par l’administrateur Supabase avant les inscriptions prestataire.' : 'Le schéma prestataire ne peut pas être vérifié pour le moment. Réessayez plus tard ou contactez l’administrateur.');
+        }
         if (password.length < 8) throw new Error('Le mot de passe doit contenir au moins 8 caractères.');
         const { data, error: authError } = await supabase.auth.signUp({
           email,
           password,
           options: {
-            emailRedirectTo: `${window.location.origin}/account/confirm`,
+            emailRedirectTo: `${window.location.origin}/account/confirm${nextPath ? `?next=${encodeURIComponent(nextPath)}` : ''}`,
             data: { role, full_name: fullName, phone: phone || null },
           },
         });
         if (authError) throw authError;
-        if (data.session) navigate(roleHome(role), { replace: true });
+        if (data.session) navigate(nextPath ?? roleHome(role), { replace: true });
         else setNotice('Votre compte est créé. Consultez votre e-mail pour confirmer l’adresse avant la première connexion.');
       } else if (mode === 'forgot') {
         const { error: authError } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/reset-password` });
@@ -86,9 +106,13 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
 
   async function googleLogin() {
     if (!supabase) { setError('Supabase n’est pas configuré.'); return; }
-    const { error: authError } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: `${window.location.origin}/account/confirm` } });
+    const { error: authError } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: `${window.location.origin}/account/confirm${nextPath ? `?next=${encodeURIComponent(nextPath)}` : ''}` } });
     if (authError) toast.error(authError.message);
   }
+
+  if ((mode === 'login' || mode === 'signup') && loading) return <LoadingState label="Vérification de votre session…" />;
+  if ((mode === 'login' || mode === 'signup') && user && profile) return <LoadingState label="Redirection vers votre espace…" />;
+  if ((mode === 'login' || mode === 'signup') && user && !profile) return <section className="page-wrap grid min-h-[60vh] place-items-center py-12"><div className="card-surface w-full max-w-lg p-8 text-center"><h1 className="font-display text-2xl font-extrabold">Profil en préparation</h1><p className="mt-3 text-sm leading-6 text-faso-muted">Votre session est active, mais le profil n’est pas encore disponible. Vous n’avez pas besoin de vous reconnecter.</p><button type="button" className="btn-primary mt-6" onClick={() => void refreshProfile()}>Réessayer</button><Link className="btn-secondary mt-3" to="/">Retour à FasoFlow</Link></div></section>;
 
   if (mode === 'confirm') return <section className="page-wrap grid min-h-[60vh] place-items-center py-12"><div className="card-surface w-full max-w-lg p-8 text-center"><div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-faso-ivory text-faso-forest"><Mail /></div><h1 className="mt-5 font-display text-2xl font-extrabold">Confirmation du compte</h1><p className="mt-3 text-sm leading-6 text-faso-muted">{notice || (user ? 'Votre session a été reconnue.' : 'Ouvrez le lien de confirmation envoyé à votre adresse e-mail.')}</p><Link className="btn-primary mt-6" to="/login">Continuer <ArrowRight className="h-4 w-4" /></Link></div></section>;
 
@@ -101,7 +125,7 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
   return <section className="page-wrap grid min-h-[68vh] items-center gap-10 py-12 lg:grid-cols-[.95fr_1.05fr]">
     <div className="hidden rounded-[2rem] bg-faso-forest p-10 text-white lg:block"><span className="badge-soft !bg-white/10 !text-faso-saffron">FasoFlow · Burkina Faso</span><h2 className="mt-8 max-w-md font-display text-4xl font-extrabold leading-tight">Le commerce local commence par une bonne rencontre.</h2><p className="mt-5 max-w-md leading-7 text-white/70">Achetez auprès des boutiques locales, gérez votre activité ou rejoignez le réseau de livraison.</p><div className="mt-10 grid grid-cols-3 gap-3 text-center text-xs font-bold"><div className="rounded-2xl bg-white/10 p-4"><StoreMark />Commerçants</div><div className="rounded-2xl bg-white/10 p-4"><ShieldCheck className="mx-auto mb-2 h-5 w-5 text-faso-saffron" />Clients</div><div className="rounded-2xl bg-white/10 p-4"><TruckMark />Livreurs</div></div></div>
     <div className="mx-auto w-full max-w-lg"><Link to="/" className="mb-6 inline-flex items-center gap-2 text-sm font-bold text-faso-forest"><ArrowLeft className="h-4 w-4" /> Retour à FasoFlow</Link><p className="eyebrow">{mode === 'login' ? 'Votre espace' : mode === 'signup' ? 'Créer un compte' : mode === 'reset' ? 'Lien sécurisé' : 'Aide à la connexion'}</p><h1 className="mt-2 font-display text-3xl font-extrabold">{title}</h1><p className="mt-2 text-sm text-faso-muted">{subtitle}</p>
-      {mode === 'signup' && <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-4">{([{ id: 'client', label: 'Client' }, { id: 'merchant', label: 'Commerçant' }, { id: 'courier', label: 'Livreur' }, { id: 'service_provider', label: 'Prestataire' }] as const).map((option) => <button key={option.id} type="button" onClick={() => { setRole(option.id); setSearch((prev) => { prev.set('role', option.id); return prev; }); }} className={`rounded-2xl border px-2 py-3 text-xs font-bold transition sm:text-sm ${role === option.id ? 'border-faso-forest bg-faso-forest text-white' : 'border-faso-line bg-white text-faso-muted'}`}>{option.label}</button>)}</div>}
+      {mode === 'signup' && <><div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-4">{([{ id: 'client', label: 'Client' }, { id: 'merchant', label: 'Commerçant' }, { id: 'courier', label: 'Livreur' }, { id: 'service_provider', label: 'Prestataire' }] as const).map((option) => { const disabled = option.id === 'service_provider' && providerSchemaStatus !== 'ready'; return <button key={option.id} type="button" disabled={disabled} onClick={() => { setRole(option.id); setSearch((prev) => { prev.set('role', option.id); return prev; }); }} className={`rounded-2xl border px-2 py-3 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm ${role === option.id ? 'border-faso-forest bg-faso-forest text-white' : 'border-faso-line bg-white text-faso-muted'}`}>{option.id === 'service_provider' && providerSchemaStatus === 'checking' ? 'Vérification…' : option.label}</button>; })}</div>{providerSchemaStatus !== 'ready' && <p role="status" className="mt-3 text-xs leading-5 text-faso-muted">{providerSchemaStatus === 'checking' ? 'Vérification de la disponibilité du profil prestataire…' : providerSchemaStatus === 'missing' ? 'Inscription prestataire indisponible : le schéma Services 015 n’est pas installé sur cette base.' : 'Inscription prestataire indisponible : le schéma ne peut pas être vérifié. Les autres rôles restent disponibles.'}</p>}</>}
       <form className="mt-6 rounded-3xl border border-faso-line bg-white p-6 shadow-soft" onSubmit={submit}>
         {mode === 'signup' && <><label className="label">Nom complet<input className="field" name="full_name" autoComplete="name" required maxLength={120} /></label><label className="label mt-4">Téléphone (facultatif)<input className="field" name="phone" type="tel" autoComplete="tel" maxLength={32} placeholder="+226 …" /></label></>}
         {mode !== 'reset' && <label className="label mt-4">Adresse e-mail<input className="field" name="email" type="email" autoComplete="email" required maxLength={254} placeholder="vous@exemple.com" /></label>}

@@ -2,6 +2,10 @@ import type { Product } from '../../types';
 
 export type ProductSaleMode = NonNullable<Product['sale_mode']>;
 
+export function catalogProductsSelect(categoryFilterApplied: boolean): string {
+  return `*, shops!inner(id,name,city,logo_url,slug), categories${categoryFilterApplied ? '!inner' : ''}(id,name,slug)`;
+}
+
 export function minimumOrderQuantity(product: Pick<Product, 'sale_mode' | 'minimum_order_quantity'>): number {
   return Math.max(1, product.minimum_order_quantity ?? (product.sale_mode === 'wholesale' ? 2 : 1));
 }

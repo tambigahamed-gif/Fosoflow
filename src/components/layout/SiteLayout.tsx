@@ -7,15 +7,16 @@ import { Logo } from '../ui/Logo';
 export function SiteLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [searchKind, setSearchKind] = useState<'products' | 'services' | 'shops'>('products');
+  const [searchKind, setSearchKind] = useState<'products' | 'services' | 'shops' | 'merchants' | 'providers'>('products');
   const navigate = useNavigate();
-  const { user, profile } = useAuth();
+  const { user, profile, loading } = useAuth();
 
   function submitSearch(event: FormEvent) {
     event.preventDefault();
     const params = new URLSearchParams();
     if (query.trim()) params.set('q', query.trim());
-    const destination = searchKind === 'services' ? '/services' : searchKind === 'shops' ? '/shops' : '/marketplace';
+    const destination = searchKind === 'services' || searchKind === 'providers' ? '/services' : searchKind === 'shops' || searchKind === 'merchants' ? '/shops' : '/marketplace';
+    if (searchKind === 'providers') params.set('type', 'provider');
     navigate(`${destination}${params.size ? `?${params.toString()}` : ''}`);
     setMenuOpen(false);
   }
@@ -34,19 +35,19 @@ export function SiteLayout() {
         </nav>
         <form className="hidden max-w-[330px] flex-1 items-center gap-2 rounded-full border border-faso-line bg-white px-4 py-2.5 xl:flex" onSubmit={submitSearch} role="search">
           <Search className="h-4 w-4 text-faso-muted" aria-hidden="true" />
-          <select className="max-w-24 bg-transparent text-xs font-semibold text-faso-forest outline-none" value={searchKind} onChange={(e) => setSearchKind(e.target.value as typeof searchKind)} aria-label="Type de recherche"><option value="products">Produits</option><option value="services">Services</option><option value="shops">Boutiques</option></select>
-          <input className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-faso-muted/70" placeholder="Que recherchez-vous ?" value={query} onChange={(e) => setQuery(e.target.value)} aria-label={`Rechercher ${searchKind === 'products' ? 'des produits' : searchKind === 'services' ? 'des services' : 'des boutiques'}`} />
+          <select className="max-w-28 bg-transparent text-xs font-semibold text-faso-forest outline-none" value={searchKind} onChange={(e) => setSearchKind(e.target.value as typeof searchKind)} aria-label="Type de recherche"><option value="products">Produits</option><option value="services">Services</option><option value="shops">Boutiques</option><option value="merchants">Commerçants</option><option value="providers">Prestataires</option></select>
+          <input className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-faso-muted/70" placeholder="Que recherchez-vous ?" value={query} onChange={(e) => setQuery(e.target.value)} aria-label={`Rechercher ${searchKind === 'products' ? 'des produits' : searchKind === 'services' ? 'des services' : searchKind === 'providers' ? 'des prestataires' : searchKind === 'merchants' ? 'des boutiques et commerçants' : 'des boutiques'}`} />
           <button className="text-xs font-bold text-faso-forest" type="submit">Chercher</button>
         </form>
         <div className="hidden items-center gap-3 md:flex">
-          {user && profile ? <Link className="btn-primary !min-h-10 !px-4 !py-2" to={roleHome(profile.role)}>Mon espace <ArrowRight className="h-4 w-4" /></Link> : <><Link className="text-sm font-bold text-faso-ink hover:text-faso-forest" to="/login">Connexion</Link><Link className="btn-primary !min-h-10 !px-4 !py-2" to="/signup">Créer un compte</Link></>}
+          {loading ? <span role="status" aria-live="polite" className="text-sm font-semibold text-faso-muted">Vérification de la session…</span> : user ? profile ? <Link className="btn-primary !min-h-10 !px-4 !py-2" to={roleHome(profile.role)}>Mon espace <ArrowRight className="h-4 w-4" /></Link> : <span role="status" className="text-sm font-semibold text-faso-muted">Compte connecté · profil en préparation</span> : <><Link className="text-sm font-bold text-faso-ink hover:text-faso-forest" to="/login">Connexion</Link><Link className="btn-primary !min-h-10 !px-4 !py-2" to="/signup">Créer un compte</Link></>}
         </div>
         <button className="grid h-10 w-10 place-items-center rounded-full border border-faso-line bg-white md:hidden" onClick={() => setMenuOpen(!menuOpen)} aria-label={menuOpen ? 'Fermer le menu' : 'Ouvrir le menu'} aria-expanded={menuOpen}>{menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}</button>
       </div>
       {menuOpen && <div className="border-t border-faso-line bg-faso-ivory px-4 pb-5 pt-3 md:hidden">
-        <form className="mb-4 grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-2xl border border-faso-line bg-white px-3 py-3" onSubmit={submitSearch}><Search className="h-4 w-4 text-faso-muted" /><div className="min-w-0"><select className="w-full bg-transparent text-xs font-semibold text-faso-forest outline-none" value={searchKind} onChange={(e) => setSearchKind(e.target.value as typeof searchKind)} aria-label="Type de recherche"><option value="products">Produits</option><option value="services">Services</option><option value="shops">Boutiques</option></select><input className="w-full bg-transparent text-sm outline-none" placeholder="Rechercher…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><button className="text-xs font-bold text-faso-forest">OK</button></form>
+        <form className="mb-4 grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-2xl border border-faso-line bg-white px-3 py-3" onSubmit={submitSearch}><Search className="h-4 w-4 text-faso-muted" /><div className="min-w-0"><select className="w-full bg-transparent text-xs font-semibold text-faso-forest outline-none" value={searchKind} onChange={(e) => setSearchKind(e.target.value as typeof searchKind)} aria-label="Type de recherche"><option value="products">Produits</option><option value="services">Services</option><option value="shops">Boutiques</option><option value="merchants">Commerçants</option><option value="providers">Prestataires</option></select><input className="w-full bg-transparent text-sm outline-none" placeholder="Rechercher…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><button className="text-xs font-bold text-faso-forest">OK</button></form>
         <div className="grid gap-1">{[['Produits', '/marketplace'], ['Services', '/services'], ['Boutiques', '/shops'], ['Tarifs', '/pricing']].map(([label, path]) => <Link key={path} className="rounded-xl px-3 py-3 text-sm font-semibold hover:bg-white" to={path} onClick={close}>{label}</Link>)}</div>
-        {user && profile ? <Link className="btn-primary mt-3 w-full" to={roleHome(profile.role)} onClick={close}>Mon espace <ArrowRight className="h-4 w-4" /></Link> : <div className="mt-3 grid grid-cols-2 gap-2"><Link className="btn-secondary" to="/login" onClick={close}>Connexion</Link><Link className="btn-primary" to="/signup" onClick={close}>Inscription</Link></div>}
+        {loading ? <p role="status" aria-live="polite" className="mt-3 rounded-xl bg-white px-3 py-3 text-sm text-faso-muted">Vérification de la session…</p> : user ? profile ? <Link className="btn-primary mt-3 w-full" to={roleHome(profile.role)} onClick={close}>Mon espace <ArrowRight className="h-4 w-4" /></Link> : <p role="status" className="mt-3 rounded-xl bg-white px-3 py-3 text-sm text-faso-muted">Compte connecté · profil en préparation</p> : <div className="mt-3 grid grid-cols-2 gap-2"><Link className="btn-secondary" to="/login" onClick={close}>Connexion</Link><Link className="btn-primary" to="/signup" onClick={close}>Inscription</Link></div>}
       </div>}
     </header>
     <main><Outlet /></main>

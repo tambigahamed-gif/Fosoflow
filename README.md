@@ -10,7 +10,7 @@ L’application comprend le marché produits, les espaces client/commerçant/liv
 
 Les requêtes de diagnostic précédentes ont identifié les endpoints Supabase et confirmé que plusieurs données sensibles refusent les accès anonymes. Elles ne permettent pas de confirmer l’historique des migrations, les règles RLS pour chaque rôle ou la présence de l’instance exacte du schéma. L’accès administrateur Supabase n’est pas disponible ici. Ne lancez pas les migrations sur la base connectée sans d’abord vérifier son historique et l’état réel de ses tables/politiques.
 
-Les fichiers de cette vague sont encore locaux à ce stade : aucune variable d’environnement réelle, donnée ou migration Supabase n’a été changée. L’utilisateur a explicitement autorisé le push GitHub et l’auto-déploiement Vercel ; leur résultat sera confirmé séparément, sans appliquer la migration 015. Les pages Conditions et Confidentialité restent des brouillons à compléter par l’exploitant (identité officielle, coordonnées, durées, droits et règles applicables) avant une ouverture publique définitive.
+Les changements de code et de documentation ne modifient aucune variable d’environnement réelle ni donnée Supabase. L’utilisateur a explicitement autorisé le push GitHub et l’auto-déploiement Vercel ; le résultat est à confirmer séparément et ne vaut pas preuve de fonctionnement Supabase. La migration 015 demeure non appliquée sans vérification et autorisation distinctes. Les pages Conditions et Confidentialité restent des brouillons à compléter par l’exploitant (identité officielle, coordonnées, durées, droits et règles applicables) avant une ouverture publique définitive.
 
 ## SasPay et abonnements
 

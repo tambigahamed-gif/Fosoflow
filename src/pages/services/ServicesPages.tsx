@@ -16,6 +16,7 @@ interface PublicService extends ServiceListing {
 
 export function ServicesPage() {
   const [params, setParams] = useSearchParams();
+  const providerOnly = params.get('type') === 'provider';
   const [search, setSearch] = useState(params.get('q') ?? '');
   const [city, setCity] = useState(params.get('city') ?? '');
   const [category, setCategory] = useState(params.get('category') ?? '');
@@ -60,6 +61,18 @@ export function ServicesPage() {
         && (!category || item.service_categories?.slug === category);
     });
   }, [services, search, city, category]);
+  const visibleProviders = useMemo(() => {
+    const grouped = new Map<string, { provider: NonNullable<PublicService['service_provider_profiles']>; serviceCount: number; categories: Set<string> }>();
+    for (const service of visible) {
+      const provider = service.service_provider_profiles;
+      if (!provider) continue;
+      const existing = grouped.get(provider.user_id) ?? { provider, serviceCount: 0, categories: new Set<string>() };
+      existing.serviceCount += 1;
+      if (service.service_categories?.name) existing.categories.add(service.service_categories.name);
+      grouped.set(provider.user_id, existing);
+    }
+    return [...grouped.values()];
+  }, [visible]);
 
   function updateQuery(event: FormEvent) {
     event.preventDefault();
@@ -67,21 +80,22 @@ export function ServicesPage() {
     if (search.trim()) next.set('q', search.trim());
     if (city.trim()) next.set('city', city.trim());
     if (category) next.set('category', category);
+    if (providerOnly) next.set('type', 'provider');
     setParams(next);
   }
 
   return <section className="page-wrap py-12 sm:py-16">
-    <div className="max-w-3xl"><p className="eyebrow">Savoir-faire près de vous</p><h1 className="section-title mt-2">Trouver un professionnel</h1><p className="mt-3 leading-7 text-faso-muted">Découvrez des prestations publiées par des professionnels du Burkina Faso. Demandez un devis, échangez avant de convenir d’une date et d’un lieu.</p></div>
+    <div className="max-w-3xl"><p className="eyebrow">Savoir-faire près de vous</p><h1 className="section-title mt-2">{providerOnly ? 'Trouver un prestataire' : 'Trouver un professionnel'}</h1><p className="mt-3 leading-7 text-faso-muted">{providerOnly ? 'Parcourez les profils professionnels associés à des prestations actives. Chaque profil est dédupliqué à partir des annonces publiées.' : 'Découvrez des prestations publiées par des professionnels du Burkina Faso. Demandez un devis, échangez avant de convenir d’une date et d’un lieu.'}</p></div>
     {!isSupabaseConfigured ? <div className="mt-8"><SetupNotice /></div> : <>
       <form onSubmit={updateQuery} className="mt-8 grid gap-3 rounded-3xl border border-faso-line bg-white p-4 sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-end">
-        <label className="label">Recherche<input className="field mt-1" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Ex. plomberie, couture…" /></label>
+        <label className="label">{providerOnly ? 'Nom du prestataire, activité ou service' : 'Recherche'}<input className="field mt-1" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={providerOnly ? 'Ex. Aïcha, plomberie, couture…' : 'Ex. plomberie, couture…'} /></label>
         <label className="label">Ville / zone<input className="field mt-1" value={city} onChange={(event) => setCity(event.target.value)} placeholder="Ex. Ouagadougou" /></label>
         <label className="label">Famille<select className="field mt-1" value={category} onChange={(event) => setCategory(event.target.value)}><option value="">Toutes les familles</option>{categories.map((item) => <option key={item.id} value={item.slug}>{item.name}</option>)}</select></label>
         <button className="btn-primary sm:mb-0.5"><Search className="h-4 w-4" />Filtrer</button>
       </form>
       {migrationMissing && <p role="status" className="mt-4 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">La marketplace de services nécessite la migration locale `015_marketplace_services_and_product_modes.sql`. Aucune annonce fictive n’est affichée.</p>}
       {error && <div role="alert" className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">Impossible de charger les services : {error}. Réessayez plus tard.</div>}
-      {loading ? <div className="mt-7"><LoadingState label="Chargement des prestations…" /></div> : !migrationMissing && !error && <div className="mt-7">{visible.length ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{visible.map((service) => <ServiceCard key={service.id} service={service} />)}</div> : <EmptyState title={services.length ? 'Aucun résultat pour ces filtres' : 'Aucune prestation publiée pour le moment'}><p>Les profils et prestations seront visibles après validation. Aucun prestataire ou tarif n’est inventé.</p>{services.length > 0 && <button className="mt-3 font-bold text-faso-forest" onClick={() => { setSearch(''); setCity(''); setCategory(''); setParams({}); }}>Effacer les filtres</button>}</EmptyState>}</div>}
+      {loading ? <div className="mt-7"><LoadingState label={providerOnly ? 'Chargement des prestataires…' : 'Chargement des prestations…'} /></div> : !migrationMissing && !error && <div className="mt-7">{providerOnly ? visibleProviders.length ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{visibleProviders.map(({ provider, serviceCount, categories: serviceCategories }) => <Link key={provider.user_id} to={`/providers/${provider.user_id}`} className="card-surface p-5 transition hover:-translate-y-1 hover:shadow-card"><span className="badge-soft"><BadgeCheck className="mr-1 h-3.5 w-3.5" />Profil professionnel publié</span><h2 className="mt-4 font-display text-xl font-extrabold">{provider.display_name}</h2><p className="mt-2 flex items-center gap-1.5 text-sm text-faso-muted"><MapPin className="h-4 w-4" />{provider.city || 'Burkina Faso'}{provider.service_area.length ? ` · ${provider.service_area.join(', ')}` : ''}</p>{provider.bio && <p className="mt-3 line-clamp-3 text-sm leading-6 text-faso-muted">{provider.bio}</p>}<p className="mt-4 text-xs font-semibold text-faso-forest">{serviceCount} prestation(s) active(s){serviceCategories.size ? ` · ${[...serviceCategories].join(', ')}` : ''}</p><span className="mt-4 inline-flex items-center text-sm font-bold text-faso-forest">Voir le profil et les prestations <ArrowRight className="ml-1 h-4 w-4" /></span></Link>)}</div> : <EmptyState title={services.length ? 'Aucun prestataire ne correspond à ces filtres' : 'Aucun profil professionnel publié'}><p>Les profils affichés disposent d’au moins une prestation active. Aucun prestataire n’est inventé.</p>{services.length > 0 && <button className="mt-3 font-bold text-faso-forest" onClick={() => { setSearch(''); setCity(''); setCategory(''); setParams({ type: 'provider' }); }}>Effacer les filtres</button>}</EmptyState> : visible.length ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{visible.map((service) => <ServiceCard key={service.id} service={service} />)}</div> : <EmptyState title={services.length ? 'Aucun résultat pour ces filtres' : 'Aucune prestation publiée pour le moment'}><p>Les profils et prestations seront visibles après validation. Aucun prestataire ou tarif n’est inventé.</p>{services.length > 0 && <button className="mt-3 font-bold text-faso-forest" onClick={() => { setSearch(''); setCity(''); setCategory(''); setParams({}); }}>Effacer les filtres</button>}</EmptyState>}</div>}
     </>}
   </section>;
 }

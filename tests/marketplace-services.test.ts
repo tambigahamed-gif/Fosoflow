@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { maximumOrderQuantity, minimumOrderQuantity, orderRuleError, productModeLabel } from '../src/features/marketplace/product-rules';
+import { catalogProductsSelect, maximumOrderQuantity, minimumOrderQuantity, orderRuleError, productModeLabel } from '../src/features/marketplace/product-rules';
 import { isMissingServicesMigration, servicePriceLabel, serviceRequestStatusLabels } from '../src/features/services/service-utils';
 import type { Product } from '../src/types';
 
@@ -9,6 +9,12 @@ const product = (sale_mode: Product['sale_mode'], stock_quantity = 5, minimum_or
 });
 
 describe('règles locales des modes de vente', () => {
+  it('ne filtre les produits sur la relation catégorie que lorsqu’une catégorie est sélectionnée', () => {
+    expect(catalogProductsSelect(false)).toContain('categories(id,name,slug)');
+    expect(catalogProductsSelect(true)).toContain('categories!inner(id,name,slug)');
+    expect(catalogProductsSelect(false)).toContain('shops!inner(id,name,city,logo_url,slug)');
+  });
+
   it('impose les minimums de gros et respecte le stock des modes en stock', () => {
     const wholesale = product('wholesale', 8, 4);
     expect(minimumOrderQuantity(wholesale)).toBe(4);

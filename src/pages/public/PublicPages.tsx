@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowRight, ArrowUpRight, BadgeCheck, ChevronRight, CircleHelp, Leaf, PackageCheck, Search, ShieldCheck, ShoppingBag, Store, Truck, Wrench } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, BadgeCheck, ChevronRight, CircleHelp, Leaf, MessageCircle, PackageCheck, Search, ShieldCheck, ShoppingBag, Store, Truck, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { formatXof } from '../../lib/utils';
@@ -9,7 +9,7 @@ import { ProductCard } from '../../components/products/ProductCard';
 import { ProductActions } from '../../features/orders/ProductActions';
 import { SetupNotice, EmptyState, LoadingState } from '../../components/ui/Callout';
 import { plansFor } from '../../features/subscriptions/plans';
-import { productConditionLabel, productModeLabel } from '../../features/marketplace/product-rules';
+import { catalogProductsSelect, isMissingProductModesMigration, productConditionLabel, productModeLabel } from '../../features/marketplace/product-rules';
 import { useAuth } from '../../app/auth';
 
 const categoryCards = [
@@ -24,31 +24,39 @@ export function HomePage() {
   const [loading, setLoading] = useState(isSupabaseConfigured);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const [searchKind, setSearchKind] = useState<'products' | 'services' | 'shops'>('products');
+  const [searchKind, setSearchKind] = useState<'products' | 'services' | 'shops' | 'merchants' | 'providers'>('products');
   const navigate = useNavigate();
   useEffect(() => {
     if (!supabase) return;
     let alive = true;
-    void supabase.from('products').select('*, shops!inner(id,name,city,logo_url)').eq('status', 'active').eq('shops.status', 'active').order('created_at', { ascending: false }).limit(4)
+    void supabase.from('products').select('*, shops!inner(id,name,city,logo_url,slug)').eq('status', 'active').eq('shops.status', 'active').order('created_at', { ascending: false }).limit(4)
       .then(({ data, error: queryError }) => { if (alive) { setProducts((data as Product[] | null) ?? []); setError(queryError?.message ?? ''); setLoading(false); } }, (reason: unknown) => { if (alive) { setError(reason instanceof Error ? reason.message : 'Vérifiez votre connexion puis réessayez.'); setLoading(false); } });
     return () => { alive = false; };
   }, []);
-  function submitSearch(e: FormEvent) { e.preventDefault(); const q = search.trim(); const destination = searchKind === 'services' ? '/services' : searchKind === 'shops' ? '/shops' : '/marketplace'; navigate(`${destination}${q ? `?q=${encodeURIComponent(q)}` : ''}`); }
+  function submitSearch(e: FormEvent) {
+    e.preventDefault();
+    const params = new URLSearchParams();
+    if (search.trim()) params.set('q', search.trim());
+    const destination = searchKind === 'services' || searchKind === 'providers' ? '/services' : searchKind === 'shops' || searchKind === 'merchants' ? '/shops' : '/marketplace';
+    if (searchKind === 'providers') params.set('type', 'provider');
+    const query = params.toString();
+    navigate(`${destination}${query ? `?${query}` : ''}`);
+  }
   return <>
     <section className="relative overflow-hidden bg-[#F0ECE0]">
       <div className="hero-grain absolute inset-0 opacity-40" />
-      <div className="page-wrap relative grid min-h-[560px] items-center gap-10 py-12 lg:grid-cols-[.95fr_1.05fr] lg:py-16">
-        <div className="max-w-xl fade-up">
+      <div className="page-wrap relative grid min-w-0 grid-cols-1 min-h-[560px] items-center gap-10 py-12 lg:grid-cols-[.95fr_1.05fr] lg:py-16">
+        <div className="min-w-0 max-w-xl fade-up">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-faso-forest/15 bg-white/75 px-4 py-2 text-xs font-bold text-faso-forest"><span className="h-2 w-2 rounded-full bg-faso-saffron" />Le commerce local en mouvement</div>
-          <h1 className="font-display text-[2.8rem] font-extrabold leading-[1.04] tracking-[-.045em] text-faso-ink sm:text-6xl">Les bonnes trouvailles, <span className="text-faso-forest">près de vous.</span></h1>
+          <h1 className="font-display text-balance text-[2.4rem] font-extrabold leading-[1.06] tracking-[-.045em] text-faso-ink sm:text-6xl">Les bonnes trouvailles, <span className="text-faso-forest">près de vous.</span></h1>
           <p className="mt-6 max-w-lg text-base leading-7 text-faso-muted sm:text-lg">Découvrez les boutiques et les professionnels du Burkina Faso, échangez directement et trouvez ce dont vous avez besoin.</p>
-          <form className="mt-8 flex max-w-xl items-center gap-2 rounded-full border border-faso-line bg-white p-2 shadow-soft" onSubmit={submitSearch} role="search">
-            <Search className="ml-3 h-5 w-5 shrink-0 text-faso-muted" /><label className="sr-only" htmlFor="home-search-kind">Type de recherche</label><select id="home-search-kind" className="max-w-24 bg-transparent text-xs font-bold text-faso-forest outline-none" value={searchKind} onChange={(event) => setSearchKind(event.target.value as typeof searchKind)}><option value="products">Produits</option><option value="services">Services</option><option value="shops">Boutiques</option></select><input className="min-w-0 flex-1 bg-transparent px-1 py-2 text-sm outline-none placeholder:text-faso-muted/70" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={searchKind === 'services' ? 'Service, professionnel, ville…' : searchKind === 'shops' ? 'Boutique ou ville…' : 'Produit ou catégorie…'} aria-label={`Rechercher ${searchKind === 'products' ? 'des produits' : searchKind === 'services' ? 'des services' : 'des boutiques'}`} />
-            <button className="btn-primary !min-h-10 !px-5 !py-2.5" type="submit">Explorer</button>
+          <form className="mt-8 flex min-w-0 max-w-xl items-center gap-1 rounded-full border border-faso-line bg-white p-2 shadow-soft sm:gap-2" onSubmit={submitSearch} role="search">
+            <Search className="ml-2 h-5 w-5 shrink-0 text-faso-muted sm:ml-3" /><label className="sr-only" htmlFor="home-search-kind">Type de recherche</label><select id="home-search-kind" className="w-[6.5rem] shrink-0 bg-transparent text-[11px] font-bold text-faso-forest outline-none sm:w-auto sm:max-w-24 sm:text-xs" value={searchKind} onChange={(event) => setSearchKind(event.target.value as typeof searchKind)}><option value="products">Produits</option><option value="services">Services</option><option value="shops">Boutiques</option><option value="merchants">Commerçants</option><option value="providers">Prestataires</option></select><input className="min-w-0 flex-1 bg-transparent px-1 py-2 text-xs outline-none placeholder:text-faso-muted/70 sm:text-sm" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={searchKind === 'services' ? 'Service, professionnel, ville…' : searchKind === 'providers' ? 'Prestataire ou service…' : searchKind === 'shops' || searchKind === 'merchants' ? 'Boutique ou ville…' : 'Produit ou catégorie…'} aria-label={`Rechercher ${searchKind === 'products' ? 'des produits' : searchKind === 'services' ? 'des services' : searchKind === 'providers' ? 'des prestataires' : searchKind === 'merchants' ? 'des commerçants' : 'des boutiques'}`} />
+            <button className="btn-primary shrink-0 !min-h-10 !px-3 !py-2.5 text-xs sm:!px-5 sm:text-sm" type="submit">Explorer</button>
           </form>
           <div className="mt-7 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs font-semibold text-faso-muted"><span className="inline-flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-faso-forest" />Vendeurs et statuts clairs</span><span className="inline-flex items-center gap-2"><PackageCheck className="h-4 w-4 text-faso-forest" />Suivi de commande</span></div>
         </div>
-        <div className="relative mx-auto w-full max-w-[610px] lg:ml-auto">
+        <div className="relative mx-auto min-w-0 w-full max-w-[610px] lg:ml-auto">
           <div className="absolute -right-6 -top-8 h-28 w-28 rounded-full bg-faso-saffron/35 blur-2xl" />
           <div className="relative aspect-[1.13/1] overflow-hidden rounded-[2.4rem] bg-faso-forest shadow-card sm:aspect-[1.25/1]">
             <img src="/images/hero.webp" alt="Marché de quartier contemporain au Burkina Faso" className="h-full w-full object-cover" />
@@ -94,45 +102,74 @@ export function MarketplacePage() {
   const q = params.get('q') ?? '';
   const categorySlug = params.get('category') ?? '';
   const shopId = params.get('shop') ?? '';
+  const cityFilter = params.get('city') ?? '';
+  const minPriceFilter = params.get('min_price') ?? '';
+  const maxPriceFilter = params.get('max_price') ?? '';
+  const conditionFilter = params.get('condition') ?? '';
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [shops, setShops] = useState<Shop[]>([]);
   const [search, setSearch] = useState(q);
+  const [categorySelection, setCategorySelection] = useState(categorySlug);
+  const [shopSelection, setShopSelection] = useState(shopId);
+  const [city, setCity] = useState(cityFilter);
+  const [minPrice, setMinPrice] = useState(minPriceFilter);
+  const [maxPrice, setMaxPrice] = useState(maxPriceFilter);
+  const [condition, setCondition] = useState(conditionFilter);
   const [loading, setLoading] = useState(isSupabaseConfigured);
   const [error, setError] = useState('');
-  useEffect(() => { setSearch(q); }, [q]);
+  const [modeFilterMissing, setModeFilterMissing] = useState(false);
+  useEffect(() => { setSearch(q); setCategorySelection(categorySlug); setShopSelection(shopId); setCity(cityFilter); setMinPrice(minPriceFilter); setMaxPrice(maxPriceFilter); setCondition(conditionFilter); }, [q, categorySlug, shopId, cityFilter, minPriceFilter, maxPriceFilter, conditionFilter]);
   useEffect(() => {
     if (!supabase) { setLoading(false); return; }
     let live = true;
     setLoading(true);
     setError('');
-    let request = supabase.from('products').select('*, shops!inner(id,name,city,logo_url), categories(id,name,slug)').eq('status', 'active').eq('shops.status', 'active').order('created_at', { ascending: false }).limit(48);
+    setModeFilterMissing(false);
+    const validCondition = ['new', 'used', 'refurbished'].includes(conditionFilter) ? conditionFilter : '';
+    let request = supabase.from('products').select(catalogProductsSelect(Boolean(categorySlug))).eq('status', 'active').eq('shops.status', 'active').order('created_at', { ascending: false }).limit(48);
     if (q) request = request.ilike('name', `%${q}%`);
     if (categorySlug) request = request.eq('categories.slug', categorySlug);
     if (shopId) request = request.eq('shop_id', shopId);
+    if (cityFilter) request = request.ilike('shops.city', `%${cityFilter}%`);
+    if (/^\d+$/.test(minPriceFilter)) request = request.gte('price_xof', Number(minPriceFilter));
+    if (/^\d+$/.test(maxPriceFilter)) request = request.lte('price_xof', Number(maxPriceFilter));
+    if (validCondition) request = request.eq('condition', validCondition);
     void Promise.all([
       request,
       supabase.from('categories').select('*').eq('is_active', true).order('sort_order', { ascending: true }).order('name'),
       supabase.from('shops').select('*').eq('status', 'active').order('name').limit(60),
     ]).then(([productResult, categoryResult, shopResult]) => {
       if (!live) return;
-      const queryError = productResult.error ?? categoryResult.error ?? shopResult.error;
-      setProducts((productResult.data as Product[] | null) ?? []);
+      const missingModes = Boolean(productResult.error && validCondition && isMissingProductModesMigration(productResult.error.message));
+      const queryError = categoryResult.error ?? shopResult.error ?? (missingModes ? null : productResult.error);
+      setModeFilterMissing(missingModes);
+      setProducts(missingModes ? [] : (productResult.data as Product[] | null) ?? []);
       setCategories((categoryResult.data as Category[] | null) ?? []);
       setShops((shopResult.data as Shop[] | null) ?? []);
       setError(queryError?.message ?? '');
       setLoading(false);
     }, (reason: unknown) => { if (live) { setError(reason instanceof Error ? reason.message : 'Vérifiez votre connexion puis réessayez.'); setLoading(false); } });
     return () => { live = false; };
-  }, [q, categorySlug, shopId]);
-  function updateFilter(key: string, value: string) {
-    const next = new URLSearchParams(params);
-    if (value) next.set(key, value); else next.delete(key);
+  }, [q, categorySlug, shopId, cityFilter, minPriceFilter, maxPriceFilter, conditionFilter]);
+  function submitSearch(event: FormEvent) {
+    event.preventDefault();
+    const min = minPrice.trim() ? Number(minPrice) : null;
+    const max = maxPrice.trim() ? Number(maxPrice) : null;
+    if ((min !== null && (!Number.isSafeInteger(min) || min < 0)) || (max !== null && (!Number.isSafeInteger(max) || max < 0))) { toast.error('Les prix doivent être des nombres entiers positifs en FCFA.'); return; }
+    if (min !== null && max !== null && min > max) { toast.error('Le prix minimum ne peut pas dépasser le prix maximum.'); return; }
+    const next = new URLSearchParams();
+    if (search.trim()) next.set('q', search.trim());
+    if (categorySelection) next.set('category', categorySelection);
+    if (shopSelection) next.set('shop', shopSelection);
+    if (city.trim()) next.set('city', city.trim());
+    if (min !== null) next.set('min_price', String(min));
+    if (max !== null) next.set('max_price', String(max));
+    if (['new', 'used', 'refurbished'].includes(condition)) next.set('condition', condition);
     setParams(next);
   }
-  function submitSearch(event: FormEvent) { event.preventDefault(); updateFilter('q', search.trim()); }
   return <section className="page-wrap py-12 sm:py-16"><div className="max-w-2xl"><p className="eyebrow">Le marché local</p><h1 className="section-title mt-2">{q ? `Résultats pour « ${q} »` : 'Trouver votre prochaine belle découverte'}</h1><p className="mt-3 text-faso-muted">Parcourez les annonces publiées par les boutiques.</p></div>
-    <div className="mt-8 space-y-5">{!isSupabaseConfigured && <SetupNotice />}{isSupabaseConfigured && <div className="rounded-3xl border border-faso-line bg-white p-4 sm:p-5"><form className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]" role="search" onSubmit={submitSearch}><label className="sr-only" htmlFor="marketplace-search">Rechercher un produit</label><input id="marketplace-search" className="field min-w-0" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Rechercher un produit…" /><button className="btn-primary w-full sm:w-auto" type="submit">Rechercher</button></form><div className="mt-3 grid gap-3 sm:grid-cols-2"><label className="text-sm font-semibold text-faso-ink">Catégorie<select className="field mt-1" value={categorySlug} onChange={(event) => updateFilter('category', event.target.value)}><option value="">Toutes les catégories</option>{categories.map((category) => <option key={category.id} value={category.slug}>{category.name}</option>)}</select></label><label className="text-sm font-semibold text-faso-ink">Boutique<select className="field mt-1" value={shopId} onChange={(event) => updateFilter('shop', event.target.value)}><option value="">Toutes les boutiques actives</option>{shops.map((shop) => <option key={shop.id} value={shop.id}>{shop.name}{shop.city ? ` · ${shop.city}` : ''}</option>)}</select></label></div>{(q || categorySlug || shopId) && <button type="button" onClick={() => { setSearch(''); setParams({}); }} className="mt-3 min-h-10 rounded-full px-3 text-sm font-bold text-faso-forest underline underline-offset-4">Effacer les filtres</button>}</div>}{isSupabaseConfigured && (error ? <DataError message={error} resource="le catalogue et les filtres de la marketplace" /> : <ProductResults products={products} loading={loading} />)}</div>
+    <div className="mt-8 space-y-5">{!isSupabaseConfigured && <SetupNotice />}{isSupabaseConfigured && <form className="grid gap-3 rounded-3xl border border-faso-line bg-white p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-3" role="search" onSubmit={submitSearch}><label className="text-sm font-semibold text-faso-ink sm:col-span-2 lg:col-span-3" htmlFor="marketplace-search">Rechercher un produit<input id="marketplace-search" className="field mt-1 min-w-0" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nom du produit…" /></label><label className="text-sm font-semibold text-faso-ink">Catégorie<select className="field mt-1" value={categorySelection} onChange={(event) => setCategorySelection(event.target.value)}><option value="">Toutes les catégories</option>{categories.map((category) => <option key={category.id} value={category.slug}>{category.name}</option>)}</select></label><label className="text-sm font-semibold text-faso-ink">Boutique<select className="field mt-1" value={shopSelection} onChange={(event) => setShopSelection(event.target.value)}><option value="">Toutes les boutiques actives</option>{shops.map((shop) => <option key={shop.id} value={shop.id}>{shop.name}{shop.city ? ` · ${shop.city}` : ''}</option>)}</select></label><label className="text-sm font-semibold text-faso-ink">Ville<input className="field mt-1" value={city} onChange={(event) => setCity(event.target.value)} placeholder="Ex. Ouagadougou" /></label><label className="text-sm font-semibold text-faso-ink">Prix minimum (FCFA)<input className="field mt-1" type="number" min="0" step="1" value={minPrice} onChange={(event) => setMinPrice(event.target.value)} /></label><label className="text-sm font-semibold text-faso-ink">Prix maximum (FCFA)<input className="field mt-1" type="number" min="0" step="1" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /></label><label className="text-sm font-semibold text-faso-ink">État du produit<select className="field mt-1" value={condition} onChange={(event) => setCondition(event.target.value)}><option value="">Tous les états</option><option value="new">Neuf</option><option value="used">Occasion</option><option value="refurbished">Reconditionné</option></select></label><div className="flex flex-wrap items-end gap-2"><button className="btn-primary w-full sm:w-auto" type="submit">Appliquer les filtres</button>{(q || categorySlug || shopId || cityFilter || minPriceFilter || maxPriceFilter || conditionFilter) && <button type="button" onClick={() => { setSearch(''); setParams({}); }} className="min-h-11 rounded-full px-3 text-sm font-bold text-faso-forest underline underline-offset-4">Effacer</button>}</div></form>}{isSupabaseConfigured && (error ? <DataError message={error} resource="le catalogue et les filtres de la marketplace" /> : modeFilterMissing ? <p role="status" className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">Le filtre par état nécessite la migration locale 015. Les résultats ne sont pas présentés comme filtrés tant que ce champ manque.</p> : <ProductResults products={products} loading={loading} />)}</div>
   </section>;
 }
 
@@ -146,14 +183,14 @@ export function ProductPage() {
     let live = true;
     setLoading(true);
     setError('');
-    void supabase.from('products').select('*, shops!inner(id,name,city,logo_url)').eq('id', id).eq('status', 'active').eq('shops.status', 'active').maybeSingle().then(({ data, error: queryError }) => { if (live) { setProduct(data as Product | null); setError(queryError?.message ?? ''); setLoading(false); } }, (reason: unknown) => { if (live) { setError(reason instanceof Error ? reason.message : 'Vérifiez votre connexion puis réessayez.'); setLoading(false); } });
+    void supabase.from('products').select('*, shops!inner(id,name,city,logo_url,slug)').eq('id', id).eq('status', 'active').eq('shops.status', 'active').maybeSingle().then(({ data, error: queryError }) => { if (live) { setProduct(data as Product | null); setError(queryError?.message ?? ''); setLoading(false); } }, (reason: unknown) => { if (live) { setError(reason instanceof Error ? reason.message : 'Vérifiez votre connexion puis réessayez.'); setLoading(false); } });
     return () => { live = false; };
   }, [id]);
   if (loading) return <section className="page-wrap py-16"><LoadingState /></section>;
   if (!isSupabaseConfigured && !id?.startsWith('demo-')) return <section className="page-wrap py-16"><SetupNotice /></section>;
   if (error) return <section className="page-wrap py-14"><div className="mb-8"><Link className="text-sm font-bold text-faso-forest" to="/marketplace">← Retour aux produits</Link></div><DataError message={error} resource="cette annonce" /></section>;
   if (!product) return <section className="page-wrap py-14"><div className="mb-8"><Link className="text-sm font-bold text-faso-forest" to="/marketplace">← Retour aux produits</Link></div>{id?.startsWith('demo-') ? <div className="card-surface mx-auto max-w-2xl p-8"><span className="badge-soft">Exemple de présentation</span><h1 className="mt-4 font-display text-3xl font-extrabold">Annonce illustrative</h1><p className="mt-3 text-sm leading-relaxed text-faso-muted">Cette fiche et son prix servent uniquement à présenter l’interface. Aucun produit n’est proposé à la vente.</p></div> : <EmptyState title="Produit introuvable"><Link className="font-bold text-faso-forest" to="/marketplace">Retourner à la marketplace</Link></EmptyState>}</section>;
-  return <section className="page-wrap py-12"><div className="mb-7"><Link className="text-sm font-bold text-faso-forest" to="/marketplace">← Marketplace</Link></div><div className="grid gap-8 lg:grid-cols-2"><div className="overflow-hidden rounded-[2rem] bg-white">{product.image_url ? <img src={product.image_url} alt={product.name} className="aspect-square w-full object-cover" /> : <div className="grid aspect-square place-items-center text-faso-muted"><PackageCheck className="h-10 w-10" /></div>}</div><div className="py-4"><span className="badge-soft">Annonce de boutique</span><h1 className="mt-4 font-display text-3xl font-extrabold">{product.name}</h1><p className="mt-4 font-display text-2xl font-extrabold text-faso-forest">{formatXof(product.price_xof)}</p><div className="mt-3 flex flex-wrap gap-2">{product.condition && <span className="badge-soft">{productConditionLabel(product.condition)}</span>}{product.sale_mode && <span className="badge-soft">{productModeLabel(product.sale_mode)}{product.sale_mode === 'wholesale' ? ` · minimum ${product.minimum_order_quantity ?? 2}` : ''}</span>}{product.lead_time_days != null && <span className="badge-soft">Délai indicatif : {product.lead_time_days} jour(s)</span>}</div><p className="mt-5 whitespace-pre-line leading-7 text-faso-muted">{product.description}</p><div className="mt-7 rounded-2xl border border-faso-line bg-white p-4"><Link to={`/shops/${product.shops?.id}`} className="font-bold hover:text-faso-forest">{product.shops?.name ?? 'Boutique FasoFlow'}</Link><p className="mt-1 text-sm text-faso-muted">{product.shops?.city ?? 'Burkina Faso'} · {product.sale_mode === 'made_to_order' ? 'Disponible sur commande' : `Stock : ${product.stock_quantity}`}</p></div><ProductActions product={product} /><p className="mt-3 text-xs text-faso-muted">Le paiement n’est pas confirmé par cette fiche. La commande est enregistrée avant tout paiement et reste soumise à confirmation.</p></div></div></section>;
+  return <section className="page-wrap py-12"><div className="mb-7"><Link className="text-sm font-bold text-faso-forest" to="/marketplace">← Marketplace</Link></div><div className="grid gap-8 lg:grid-cols-2"><div className="overflow-hidden rounded-[2rem] bg-white">{product.image_url ? <img src={product.image_url} alt={product.name} className="aspect-square w-full object-cover" /> : <div className="grid aspect-square place-items-center text-faso-muted"><PackageCheck className="h-10 w-10" /></div>}</div><div className="py-4"><span className="badge-soft">Annonce de boutique</span><h1 className="mt-4 font-display text-3xl font-extrabold">{product.name}</h1><p className="mt-4 font-display text-2xl font-extrabold text-faso-forest">{formatXof(product.price_xof)}</p><div className="mt-3 flex flex-wrap gap-2">{product.condition && <span className="badge-soft">{productConditionLabel(product.condition)}</span>}{product.sale_mode && <span className="badge-soft">{productModeLabel(product.sale_mode)}{product.sale_mode === 'wholesale' ? ` · minimum ${product.minimum_order_quantity ?? 2}` : ''}</span>}{product.lead_time_days != null && <span className="badge-soft">Délai indicatif : {product.lead_time_days} jour(s)</span>}</div><p className="mt-5 whitespace-pre-line leading-7 text-faso-muted">{product.description}</p><div className="mt-7 rounded-2xl border border-faso-line bg-white p-4"><Link to={product.shops?.slug ? `/boutique/${product.shops.slug}` : `/shops/${product.shops?.id}`} className="font-bold hover:text-faso-forest">{product.shops?.name ?? 'Boutique FasoFlow'}</Link><p className="mt-1 text-sm text-faso-muted">{product.shops?.city ?? 'Burkina Faso'} · {product.sale_mode === 'made_to_order' ? 'Disponible sur commande' : `Stock : ${product.stock_quantity}`}</p></div><ProductActions product={product} /><p className="mt-3 text-xs text-faso-muted">Le paiement n’est pas confirmé par cette fiche. La commande est enregistrée avant tout paiement et reste soumise à confirmation.</p></div></div></section>;
 }
 
 export function ShopsPage() {
@@ -166,21 +203,73 @@ export function ShopsPage() {
   useEffect(() => { setSearch(query); }, [query]);
   const visibleShops = useMemo(() => { const term = search.trim().toLocaleLowerCase('fr'); return shops.filter((shop) => !term || `${shop.name} ${shop.city ?? ''}`.toLocaleLowerCase('fr').includes(term)); }, [shops, search]);
   useEffect(() => { if (!supabase) { setLoading(false); return; } let live = true; void supabase.from('shops').select('*').eq('status', 'active').order('name').limit(60).then(({ data, error: queryError }) => { if (live) { setShops((data as Shop[] | null) ?? []); setError(queryError?.message ?? ''); setLoading(false); } }, (reason: unknown) => { if (live) { setError(reason instanceof Error ? reason.message : 'Vérifiez votre connexion puis réessayez.'); setLoading(false); } }); return () => { live = false; }; }, []);
-  return <section className="page-wrap py-12"><p className="eyebrow">Les visages du commerce local</p><h1 className="section-title mt-2">Boutiques</h1><p className="mt-3 max-w-xl text-sm leading-6 text-faso-muted">Découvrez les boutiques qui partagent leurs produits et leur savoir-faire sur FasoFlow.</p><div className="mt-8 space-y-5">{!isSupabaseConfigured && <SetupNotice />}{isSupabaseConfigured && !loading && !error && shops.length > 0 && <label className="block max-w-xl text-sm font-semibold text-faso-ink">Rechercher une boutique ou une ville<input className="field mt-1" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nom de boutique ou ville…" /></label>}{loading ? <LoadingState label="Chargement des boutiques…" /> : error ? <DataError message={error} resource="les boutiques" /> : !isSupabaseConfigured ? null : shops.length ? visibleShops.length ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{visibleShops.map((shop) => <Link className="card-surface p-5 transition hover:-translate-y-1 hover:shadow-card" key={shop.id} to={`/shops/${shop.id}`}><div className="flex items-center gap-4">{shop.logo_url ? <img src={shop.logo_url} alt="" className="h-14 w-14 rounded-2xl object-cover" /> : <div className="grid h-14 w-14 place-items-center rounded-2xl bg-faso-ivory text-faso-forest"><Store /></div>}<div><h2 className="font-display text-lg font-extrabold">{shop.name}</h2><p className="mt-1 text-sm text-faso-muted">{shop.city}</p></div></div><p className="mt-4 line-clamp-2 text-sm leading-6 text-faso-muted">{shop.description}</p><span className="mt-4 inline-flex items-center gap-1 text-sm font-bold text-faso-forest">Visiter la boutique <ChevronRight className="h-4 w-4" /></span></Link>)}</div> : <EmptyState title="Aucun résultat"><p>Aucune boutique active ne correspond à votre recherche.</p></EmptyState> : <EmptyState title="La vitrine se remplit"><p>Aucune boutique active n’est publiée pour le moment. Les boutiques approuvées apparaîtront ici dès qu’elles seront publiées.</p><Link to="/signup?role=merchant" className="mt-3 inline-flex font-bold text-faso-forest">Créer une boutique <ArrowRight className="ml-1 h-4 w-4" /></Link></EmptyState>}</div></section>;
+  return <section className="page-wrap py-12"><p className="eyebrow">Les visages du commerce local</p><h1 className="section-title mt-2">Boutiques</h1><p className="mt-3 max-w-xl text-sm leading-6 text-faso-muted">Découvrez les boutiques qui partagent leurs produits et leur savoir-faire sur FasoFlow.</p><div className="mt-8 space-y-5">{!isSupabaseConfigured && <SetupNotice />}{isSupabaseConfigured && !loading && !error && shops.length > 0 && <label className="block max-w-xl text-sm font-semibold text-faso-ink">Rechercher une boutique ou une ville<input className="field mt-1" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nom de boutique ou ville…" /></label>}{loading ? <LoadingState label="Chargement des boutiques…" /> : error ? <DataError message={error} resource="les boutiques" /> : !isSupabaseConfigured ? null : shops.length ? visibleShops.length ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{visibleShops.map((shop) => <Link className="card-surface p-5 transition hover:-translate-y-1 hover:shadow-card" key={shop.id} to={`/boutique/${shop.slug}`}><div className="flex items-center gap-4">{shop.logo_url ? <img src={shop.logo_url} alt="" className="h-14 w-14 rounded-2xl object-cover" /> : <div className="grid h-14 w-14 place-items-center rounded-2xl bg-faso-ivory text-faso-forest"><Store /></div>}<div><h2 className="font-display text-lg font-extrabold">{shop.name}</h2><p className="mt-1 text-sm text-faso-muted">{shop.city}</p></div></div><p className="mt-4 line-clamp-2 text-sm leading-6 text-faso-muted">{shop.description}</p><span className="mt-4 inline-flex items-center gap-1 text-sm font-bold text-faso-forest">Visiter la boutique <ChevronRight className="h-4 w-4" /></span></Link>)}</div> : <EmptyState title="Aucun résultat"><p>Aucune boutique active ne correspond à votre recherche.</p></EmptyState> : <EmptyState title="La vitrine se remplit"><p>Aucune boutique active n’est publiée pour le moment. Les boutiques approuvées apparaîtront ici dès qu’elles seront publiées.</p><Link to="/signup?role=merchant" className="mt-3 inline-flex font-bold text-faso-forest">Créer une boutique <ArrowRight className="ml-1 h-4 w-4" /></Link></EmptyState>}</div></section>;
 }
 
 export function ShopPage() {
-  const { id } = useParams();
+  const { id, slug } = useParams();
+  const { user, profile } = useAuth();
+  const navigate = useNavigate();
+  const lookupValue = slug ?? id ?? '';
   const [shop, setShop] = useState<Shop | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  useEffect(() => { if (!supabase || !id) { setLoading(false); return; } let live = true; setLoading(true); setError(''); Promise.all([supabase.from('shops').select('*').eq('id', id).eq('status', 'active').maybeSingle(), supabase.from('products').select('*, shops!inner(id,name,city,logo_url)').eq('shop_id', id).eq('status', 'active').eq('shops.status', 'active')]).then(([s, p]) => { if (live) { const queryError = s.error ?? p.error; setShop(s.data as Shop | null); setProducts((p.data as Product[] | null) ?? []); setError(queryError?.message ?? ''); setLoading(false); } }, (reason: unknown) => { if (live) { setError(reason instanceof Error ? reason.message : 'Vérifiez votre connexion puis réessayez.'); setLoading(false); } }); return () => { live = false; }; }, [id]);
+  const [contactBusy, setContactBusy] = useState(false);
+
+  async function contactShop() {
+    if (!user) {
+      const returnPath = slug ? `/boutique/${encodeURIComponent(slug)}` : `/shops/${encodeURIComponent(id ?? '')}`;
+      navigate(`/login?next=${encodeURIComponent(returnPath)}`);
+      return;
+    }
+    if (!profile) { toast.error('Votre profil est encore en cours de chargement. Réessayez dans un instant.'); return; }
+    if (profile.role !== 'client') { toast.error('La messagerie d’une boutique est réservée aux comptes clients.'); return; }
+    if (!supabase || !shop) return;
+    setContactBusy(true);
+    try {
+      const result = await supabase.rpc('get_or_create_conversation', { p_shop_id: shop.id, p_product_id: null, p_order_id: null });
+      if (result.error) { toast.error(`Conversation impossible : ${result.error.message}`); return; }
+      navigate(`/client/messages?conversation=${encodeURIComponent(String(result.data))}`);
+    } catch (reason) {
+      toast.error(`Conversation impossible : ${reason instanceof Error ? reason.message : 'vérifiez votre connexion puis réessayez.'}`);
+    } finally {
+      setContactBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!supabase || !lookupValue) { setLoading(false); return; }
+    let live = true;
+    setLoading(true);
+    setError('');
+    const load = async () => {
+      const shopResult = await supabase!.from('shops').select('*').eq(slug ? 'slug' : 'id', lookupValue).eq('status', 'active').maybeSingle();
+      if (!live) return;
+      if (shopResult.error || !shopResult.data) {
+        setShop(null);
+        setProducts([]);
+        setError(shopResult.error?.message ?? '');
+        setLoading(false);
+        return;
+      }
+      const shopData = shopResult.data as Shop;
+      const productsResult = await supabase!.from('products').select('*, shops!inner(id,name,city,logo_url,slug)').eq('shop_id', shopData.id).eq('status', 'active').eq('shops.status', 'active').order('created_at', { ascending: false });
+      if (!live) return;
+      setShop(shopData);
+      setProducts((productsResult.data as Product[] | null) ?? []);
+      setError(productsResult.error?.message ?? '');
+      setLoading(false);
+    };
+    void load().catch((reason: unknown) => { if (live) { setError(reason instanceof Error ? reason.message : 'Vérifiez votre connexion puis réessayez.'); setLoading(false); } });
+    return () => { live = false; };
+  }, [id, slug, lookupValue]);
+
   if (loading) return <section className="page-wrap py-16"><LoadingState /></section>;
   if (error) return <section className="page-wrap py-16"><div className="mb-6"><Link to="/shops" className="font-bold text-faso-forest">← Voir les boutiques</Link></div><DataError message={error} resource="cette boutique" /></section>;
   if (!isSupabaseConfigured) return <section className="page-wrap py-16"><SetupNotice /></section>;
   if (!shop) return <section className="page-wrap py-16"><EmptyState title="Boutique introuvable"><Link to="/shops" className="font-bold text-faso-forest">Voir les boutiques</Link></EmptyState></section>;
-  return <section className="page-wrap py-12"><div className="card-surface overflow-hidden"><div className="h-48 bg-gradient-to-br from-faso-forest to-[#357966]">{shop.cover_url && <img className="h-full w-full object-cover" src={shop.cover_url} alt="" />}</div><div className="p-6 sm:p-9"><span className="badge-soft"><BadgeCheck className="mr-1.5 h-3.5 w-3.5" /> Boutique publiée</span><h1 className="mt-3 font-display text-3xl font-extrabold">{shop.name}</h1><p className="mt-2 text-sm text-faso-muted">{shop.city} · Burkina Faso</p><p className="mt-5 max-w-3xl leading-7 text-faso-muted">{shop.description}</p></div></div><h2 className="section-title mt-12">Les produits de la boutique</h2><div className="mt-6">{products.length ? <ProductResults products={products} loading={false} /> : <EmptyState title="Aucune annonce active pour le moment" />}</div></section>;
+  return <section className="page-wrap py-12"><div className="card-surface overflow-hidden"><div className="h-48 bg-gradient-to-br from-faso-forest to-[#357966]">{shop.cover_url && <img className="h-full w-full object-cover" src={shop.cover_url} alt={`Bannière de ${shop.name}`} />}</div><div className="p-6 sm:p-9">{shop.logo_url && <img className="mb-4 h-20 w-20 rounded-2xl border border-faso-line bg-white object-cover" src={shop.logo_url} alt={`Logo de ${shop.name}`} />}<span className="badge-soft"><BadgeCheck className="mr-1.5 h-3.5 w-3.5" /> Boutique publiée</span><h1 className="mt-3 font-display text-3xl font-extrabold">{shop.name}</h1><p className="mt-2 text-sm text-faso-muted">{shop.city} · Burkina Faso</p><p className="mt-5 max-w-3xl leading-7 text-faso-muted">{shop.description}</p><div className="mt-6 flex flex-wrap items-center gap-3"><button type="button" disabled={contactBusy} onClick={() => void contactShop()} className="btn-primary"><MessageCircle className="h-4 w-4" />{contactBusy ? 'Ouverture…' : 'Contacter la boutique'}</button><span className="text-xs text-faso-muted">Messagerie FasoFlow · aucun numéro privé n’est exposé.</span></div><Link className="mt-4 inline-flex text-sm font-bold text-faso-forest underline underline-offset-4" to={`/boutique/${shop.slug}`}>Vitrine publique · /boutique/{shop.slug}</Link></div></div><h2 className="section-title mt-12">Les produits de la boutique</h2><div className="mt-6">{products.length ? <ProductResults products={products} loading={false} /> : <EmptyState title="Aucune annonce active pour le moment" />}</div></section>;
 }
 
 export function CategoryPage() {
@@ -193,7 +282,7 @@ export function CategoryPage() {
   const [search, setSearch] = useState('');
   const navigate = useNavigate();
   const visibleProducts = useMemo(() => { const term = search.trim().toLocaleLowerCase('fr'); return products.filter((product) => !term || `${product.name} ${product.description ?? ''}`.toLocaleLowerCase('fr').includes(term)); }, [products, search]);
-  useEffect(() => { if (!supabase) { setLoading(false); return; } let live = true; setLoading(true); setError(''); void supabase.from('categories').select('*').eq('is_active', true).order('sort_order', { ascending: true }).order('name').then(async ({ data, error: categoryError }) => { if (!live) return; if (categoryError) { setError(categoryError.message); setLoading(false); return; } const available = (data as Category[] | null) ?? []; setCategories(available); const selected = available.find((item) => item.slug === slug); if (!selected) { setCategory(null); setProducts([]); setLoading(false); return; } setCategory(selected); const result = await supabase!.from('products').select('*, shops!inner(id,name,city,logo_url)').eq('category_id', selected.id).eq('status', 'active').eq('shops.status', 'active').order('created_at', { ascending: false }).limit(48); if (live) { setProducts((result.data as Product[] | null) ?? []); setError(result.error?.message ?? ''); setLoading(false); } }).then(undefined, (reason: unknown) => { if (live) { setError(reason instanceof Error ? reason.message : 'Vérifiez votre connexion puis réessayez.'); setLoading(false); } }); return () => { live = false; }; }, [slug]);
+  useEffect(() => { if (!supabase) { setLoading(false); return; } let live = true; setLoading(true); setError(''); void supabase.from('categories').select('*').eq('is_active', true).order('sort_order', { ascending: true }).order('name').then(async ({ data, error: categoryError }) => { if (!live) return; if (categoryError) { setError(categoryError.message); setLoading(false); return; } const available = (data as Category[] | null) ?? []; setCategories(available); const selected = available.find((item) => item.slug === slug); if (!selected) { setCategory(null); setProducts([]); setLoading(false); return; } setCategory(selected); const result = await supabase!.from('products').select('*, shops!inner(id,name,city,logo_url,slug)').eq('category_id', selected.id).eq('status', 'active').eq('shops.status', 'active').order('created_at', { ascending: false }).limit(48); if (live) { setProducts((result.data as Product[] | null) ?? []); setError(result.error?.message ?? ''); setLoading(false); } }).then(undefined, (reason: unknown) => { if (live) { setError(reason instanceof Error ? reason.message : 'Vérifiez votre connexion puis réessayez.'); setLoading(false); } }); return () => { live = false; }; }, [slug]);
   return <section className="page-wrap py-12"><p className="eyebrow">Explorer les univers</p><h1 className="section-title mt-2">{category?.name ?? slug.replaceAll('-', ' ')}</h1>{category?.description && <p className="mt-3 text-faso-muted">{category.description}</p>}<div className="mt-6 grid gap-3 sm:grid-cols-2"><label className="text-sm font-semibold text-faso-ink">Explorer une catégorie<select className="field mt-1" value={category?.slug ?? ''} onChange={(event) => { if (event.target.value) navigate(`/categories/${event.target.value}`); }}><option value="" disabled>Choisir une catégorie</option>{categories.map((item) => <option key={item.id} value={item.slug}>{item.name}</option>)}</select></label><label className="text-sm font-semibold text-faso-ink">Filtrer les produits<input className="field mt-1" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nom ou description…" /></label></div><div className="mt-8">{!isSupabaseConfigured ? <SetupNotice /> : loading ? <LoadingState /> : error ? <DataError message={error} resource="cette catégorie et ses produits" /> : !category ? <EmptyState title="Catégorie introuvable"><Link to="/marketplace" className="font-bold text-faso-forest">Parcourir la marketplace</Link></EmptyState> : <ProductResults products={visibleProducts} loading={false} />}</div></section>;
 }
 

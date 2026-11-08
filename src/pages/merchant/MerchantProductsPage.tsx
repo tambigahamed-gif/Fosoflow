@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { PackagePlus, Pencil, Plus, Store, Trash2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useAuth } from '../../app/auth';
 import { EmptyState, SetupNotice } from '../../components/ui/Callout';
@@ -21,6 +22,7 @@ export function MerchantProductsPage() {
   const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(isSupabaseConfigured);
   const [showForm, setShowForm] = useState(false);
+  const [showShopForm, setShowShopForm] = useState(false);
   const [editing, setEditing] = useState<MerchantProduct | null>(null);
   const [busy, setBusy] = useState(false);
   const [costTableMissing, setCostTableMissing] = useState(false);
@@ -89,6 +91,45 @@ export function MerchantProductsPage() {
     setBusy(false);
     if (error) toast.error(error.message);
     else { setShop(data as Shop); toast.success('Boutique créée. Elle apparaîtra après validation.'); }
+  }
+
+  async function updateShop(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!supabase || !user || !shop) return;
+    const form = new FormData(event.currentTarget);
+    const uploadedPaths: string[] = [];
+    const uploadShopImage = async (file: File, imageKind: 'logo' | 'cover'): Promise<string> => {
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 5 * 1024 * 1024) throw new Error('Choisissez un fichier JPG, PNG ou WebP de 5 Mo maximum.');
+      const ext = file.type === 'image/png' ? 'png' : file.type === 'image/webp' ? 'webp' : 'jpg';
+      const path = `${user.id}/shops/${imageKind}-${crypto.randomUUID()}.${ext}`;
+      const uploaded = await supabase!.storage.from('product-images').upload(path, file, { upsert: false, contentType: file.type });
+      if (uploaded.error) throw new Error(uploaded.error.message);
+      uploadedPaths.push(path);
+      return supabase!.storage.from('product-images').getPublicUrl(path).data.publicUrl;
+    };
+    setBusy(true);
+    try {
+      const logoFile = form.get('logo');
+      const coverFile = form.get('cover');
+      const logoUrl = logoFile instanceof File && logoFile.size ? await uploadShopImage(logoFile, 'logo') : shop.logo_url;
+      const coverUrl = coverFile instanceof File && coverFile.size ? await uploadShopImage(coverFile, 'cover') : shop.cover_url;
+      const { data, error } = await supabase.from('shops').update({
+        name: String(form.get('name') ?? '').trim(),
+        description: String(form.get('description') ?? '').trim(),
+        city: String(form.get('city') ?? '').trim(),
+        logo_url: logoUrl,
+        cover_url: coverUrl,
+      }).eq('id', shop.id).eq('owner_id', user.id).select('*').single();
+      if (error) throw new Error(error.message);
+      setShop(data as Shop);
+      setShowShopForm(false);
+      toast.success('Informations de la boutique mises à jour.');
+    } catch (reason) {
+      if (uploadedPaths.length) await supabase.storage.from('product-images').remove(uploadedPaths).catch(() => undefined);
+      toast.error(`Mise à jour impossible : ${reason instanceof Error ? reason.message : 'vérifiez vos données et réessayez.'}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function createProduct(event: FormEvent<HTMLFormElement>) {
@@ -187,7 +228,8 @@ export function MerchantProductsPage() {
     </div>
     {loading && <div className="mt-6 h-40 animate-pulse rounded-3xl bg-white" />}
     {!loading && !shop && <div className="mt-6 rounded-3xl border border-faso-line bg-white p-6"><div className="mb-5 flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-faso-ivory text-faso-forest"><Store /></span><div><h3 className="font-display text-lg font-extrabold">Créez votre boutique</h3><p className="text-sm text-faso-muted">Commencez votre vitrine FasoFlow.</p></div></div><form className="grid gap-4 sm:grid-cols-2" onSubmit={createShop}><label className="label">Nom de boutique<input name="name" className="field" required maxLength={120} /></label><label className="label">Ville<input name="city" className="field" required maxLength={80} placeholder="Ouagadougou" /></label><label className="label sm:col-span-2">Description<textarea name="description" className="field min-h-24" maxLength={1500} /></label><button disabled={busy} className="btn-primary sm:col-span-2">{busy ? 'Création…' : 'Créer ma boutique'}</button></form></div>}
-    {shop && <div className="mt-5 rounded-2xl border border-faso-line bg-white p-4 text-sm"><span className="font-bold">{shop.name}</span><span className="mx-2 text-faso-muted">·</span><span className="capitalize text-faso-muted">Statut : {shop.status.replaceAll('_', ' ')}</span></div>}
+    {shop && <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-faso-line bg-white p-4 text-sm"><div><span className="font-bold">{shop.name}</span><span className="mx-2 text-faso-muted">·</span><span className="capitalize text-faso-muted">Statut : {shop.status.replaceAll('_', ' ')}</span><Link className="ml-2 font-bold text-faso-forest underline underline-offset-4" to={`/boutique/${shop.slug}`}>Voir ma vitrine publique</Link></div><button className="btn-secondary !min-h-9 !px-3 !py-2" type="button" onClick={() => setShowShopForm((current) => !current)}>{showShopForm ? 'Fermer' : 'Modifier ma boutique'}</button></div>}
+    {shop && showShopForm && <form onSubmit={(event) => void updateShop(event)} className="card-surface mt-4 grid gap-4 p-5 sm:grid-cols-2"><h3 className="font-display text-lg font-extrabold sm:col-span-2">Informations de la vitrine</h3><label className="label">Nom de boutique<input className="field" name="name" required maxLength={120} defaultValue={shop.name} /></label><label className="label">Ville<input className="field" name="city" required maxLength={80} defaultValue={shop.city} /></label><label className="label sm:col-span-2">Présentation<textarea className="field min-h-24" name="description" maxLength={2000} defaultValue={shop.description} /></label><label className="label">Logo<input className="field" name="logo" type="file" accept="image/jpeg,image/png,image/webp" /><span className="mt-1 block text-xs font-normal text-faso-muted">JPG, PNG, WebP · 5 Mo maximum.{shop.logo_url ? ' Un nouveau fichier remplacera le logo affiché.' : ''}</span></label><label className="label">Bannière<input className="field" name="cover" type="file" accept="image/jpeg,image/png,image/webp" /><span className="mt-1 block text-xs font-normal text-faso-muted">JPG, PNG, WebP · 5 Mo maximum.{shop.cover_url ? ' Un nouveau fichier remplacera la bannière affichée.' : ''}</span></label><button disabled={busy} className="btn-primary sm:col-span-2">{busy ? 'Enregistrement…' : 'Enregistrer les informations'}</button><p className="text-xs leading-5 text-faso-muted sm:col-span-2">L’adresse de vitrine reste <code>/boutique/{shop.slug}</code>. Les images remplacées restent conservées dans le stockage existant afin de ne pas casser d’anciennes références.</p></form>}
     {shop && businessAccess === 'error' && <p role="alert" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">L’offre Business n’a pas pu être vérifiée ; aucun coût d’achat n’est chargé ou modifié. Le CRUD produit reste disponible.</p>}
     {shop && businessAccess === 'allowed' && costTableMissing && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Les coûts d’achat sont conservés dans une table privée, non visible par les clients. La migration Business 013 doit être appliquée pour les enregistrer.</p>}
     {shop && productModesMissing && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Les champs condition, mode de vente, minimum et délai sont masqués car la migration locale 015 n’est pas appliquée. La gestion des produits existants reste disponible.</p>}

@@ -5,7 +5,7 @@ import { useAuth } from '../../app/auth';
 import { EmptyState, SetupNotice } from '../../components/ui/Callout';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import type { ServiceCategory, ServiceListing, ServiceProviderProfile } from '../../types';
-import { isMissingServicesMigration, parseServiceArea, servicePriceLabel } from '../../features/services/service-utils';
+import { isMissingServicesMigration, parseServiceArea, serviceImageLimitExceeded, servicePriceLabel } from '../../features/services/service-utils';
 
 const statusLabels: Record<ServiceListing['status'], string> = { pending_review: 'En attente de modération', active: 'Publié', rejected: 'À corriger', archived: 'Archivé' };
 
@@ -29,13 +29,23 @@ export function ProviderServicesManager() {
       supabase.from('service_listings').select('*').eq('provider_id', user.id).order('created_at', { ascending: false }),
       supabase.from('service_categories').select('*').eq('is_active', true).order('sort_order').order('name'),
     ]);
-    const queryError = profileResult.error ?? serviceResult.error ?? categoryResult.error;
-    const message = queryError?.message ?? '';
-    setMigrationMissing(Boolean(queryError && isMissingServicesMigration(message)));
-    setError(queryError && !isMissingServicesMigration(message) ? message : '');
-    setProfile(profileResult.data as ServiceProviderProfile | null);
-    setServices((serviceResult.data as ServiceListing[] | null) ?? []);
-    setCategories((categoryResult.data as ServiceCategory[] | null) ?? []);
+    const errors = [
+      ['Profil', profileResult.error],
+      ['Prestations', serviceResult.error],
+      ['Catégories', categoryResult.error],
+    ].filter((entry): entry is [string, NonNullable<typeof profileResult.error>] => Boolean(entry[1]));
+    setMigrationMissing(errors.some(([, queryError]) => isMissingServicesMigration(queryError.message)));
+    setError(errors.map(([resource, queryError]) => `${resource} : ${queryError.message}`).join(' · '));
+    if (errors.length) {
+      // Ne pas présenter des données partielles comme si le catalogue était pleinement opérationnel.
+      setProfile(null);
+      setServices([]);
+      setCategories([]);
+    } else {
+      setProfile(profileResult.data as ServiceProviderProfile | null);
+      setServices((serviceResult.data as ServiceListing[] | null) ?? []);
+      setCategories((categoryResult.data as ServiceCategory[] | null) ?? []);
+    }
     setLoading(false);
   }, [user]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -55,14 +65,31 @@ export function ProviderServicesManager() {
     if (min !== null && max !== null && max < min) { toast.error('Le prix maximum doit être supérieur ou égal au prix minimum.'); return; }
     const selectedFiles = Array.from(form.getAll('images')).filter((file): file is File => file instanceof File && file.size > 0);
     if (selectedFiles.some((file) => !['image/jpeg','image/png','image/webp'].includes(file.type) || file.size > 5 * 1024 * 1024)) { toast.error('Utilisez des images JPG, PNG ou WebP de 5 Mo maximum chacune.'); return; }
+    const existingImageCount = editing?.image_urls?.length ?? 0;
+    if (serviceImageLimitExceeded(existingImageCount, selectedFiles.length)) { toast.error('Une prestation peut avoir au maximum 8 photos.'); return; }
     setBusy(true);
     const imageUrls = [...(editing?.image_urls ?? [])];
+    const uploadedPaths: string[] = [];
+    const cleanupUploads = async () => {
+      if (!supabase || !uploadedPaths.length) return null;
+      try {
+        const { error: cleanupError } = await supabase.storage.from('service-images').remove(uploadedPaths);
+        return cleanupError ? { message: cleanupError.message } : null;
+      } catch (reason) {
+        return { message: reason instanceof Error ? reason.message : 'Erreur réseau pendant le nettoyage.' };
+      }
+    };
     for (const file of selectedFiles) {
-      if (imageUrls.length >= 8) { setBusy(false); toast.error('Une prestation peut avoir au maximum 8 photos.'); return; }
       const ext = file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
       const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
       const upload = await supabase.storage.from('service-images').upload(path, file, { upsert: false, contentType: file.type });
-      if (upload.error) { setBusy(false); toast.error(`Photo non envoyée : ${upload.error.message}`); return; }
+      if (upload.error) {
+        const cleanupError = await cleanupUploads();
+        setBusy(false);
+        toast.error(`Photo non envoyée : ${upload.error.message}${cleanupError ? ` Les photos temporaires n’ont pas pu être supprimées : ${cleanupError.message}` : ''}`);
+        return;
+      }
+      uploadedPaths.push(path);
       imageUrls.push(supabase.storage.from('service-images').getPublicUrl(path).data.publicUrl);
     }
     const payload = {
@@ -81,8 +108,13 @@ export function ProviderServicesManager() {
     const result = editing
       ? await supabase.from('service_listings').update(payload).eq('id', editing.id).select('*').single()
       : await supabase.from('service_listings').insert(payload).select('*').single();
+    if (result.error) {
+      const cleanupError = await cleanupUploads();
+      setBusy(false);
+      toast.error(`Prestation non enregistrée : ${result.error.message}${cleanupError ? ` Les photos temporaires n’ont pas pu être supprimées : ${cleanupError.message}` : ''}`);
+      return;
+    }
     setBusy(false);
-    if (result.error) { toast.error(`Prestation non enregistrée : ${result.error.message}`); return; }
     toast.success(editing ? 'Modifications enregistrées. La prestation repasse en modération.' : 'Prestation envoyée en modération.');
     setEditing(null); setShowForm(false); formElement.reset(); await refresh();
   }

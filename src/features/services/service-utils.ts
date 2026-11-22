@@ -20,6 +20,10 @@ export function parseServiceArea(value: string): string[] {
   return [...new Set(value.split(',').map((area) => area.trim()).filter(Boolean))].slice(0, 20);
 }
 
+export function serviceImageLimitExceeded(existingCount: number, incomingCount: number, limit = 8): boolean {
+  return existingCount < 0 || incomingCount < 0 || existingCount + incomingCount > limit;
+}
+
 export function isMissingServicesMigration(message: string): boolean {
   return /service_(categories|provider_profiles|listings|requests|reviews)|column .*service_request|schema cache/i.test(message)
     && /relation|table|schema cache|does not exist|could not find|column/i.test(message);

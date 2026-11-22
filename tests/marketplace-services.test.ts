@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { catalogProductsSelect, maximumOrderQuantity, minimumOrderQuantity, orderRuleError, productModeLabel } from '../src/features/marketplace/product-rules';
-import { isMissingServicesMigration, servicePriceLabel, serviceRequestStatusLabels } from '../src/features/services/service-utils';
+import { isMissingServicesMigration, serviceImageLimitExceeded, servicePriceLabel, serviceRequestStatusLabels } from '../src/features/services/service-utils';
 import type { Product } from '../src/types';
 
 const product = (sale_mode: Product['sale_mode'], stock_quantity = 5, minimum_order_quantity = 1): Product => ({
@@ -42,5 +42,12 @@ describe('découverte et devis de services', () => {
     expect(serviceRequestStatusLabels.accepted).toBe('Date et lieu convenus');
     expect(serviceRequestStatusLabels.completed).toBe('Prestation terminée');
     expect(isMissingServicesMigration('Could not find the table service_listings in the schema cache')).toBe(true);
+  });
+
+  it('vérifie le total de photos avant tout envoi au stockage', () => {
+    expect(serviceImageLimitExceeded(0, 8)).toBe(false);
+    expect(serviceImageLimitExceeded(6, 2)).toBe(false);
+    expect(serviceImageLimitExceeded(6, 3)).toBe(true);
+    expect(serviceImageLimitExceeded(-1, 1)).toBe(true);
   });
 });

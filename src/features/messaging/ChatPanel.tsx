@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ArrowUpRight, Check, MessageCircle, Send, X } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useAuth } from '../../app/auth';
 import { EmptyState, SetupNotice } from '../../components/ui/Callout';
@@ -15,7 +15,7 @@ interface Message { id: string; conversation_id: string; sender_id: string; body
 interface Offer { id: string; conversation_id: string; offered_by: string; amount_xof: number; note: string | null; status: string; created_at: string }
 
 export function ChatPanel() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [params] = useSearchParams();
   const requested = params.get('conversation');
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -26,6 +26,9 @@ export function ChatPanel() {
   const [offerAmount, setOfferAmount] = useState('');
   const [loading, setLoading] = useState(isSupabaseConfigured);
   const [sending, setSending] = useState(false);
+  const [conversationError, setConversationError] = useState('');
+  const [messageError, setMessageError] = useState('');
+  const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
 
   const loadConversations = useCallback(async () => {
     if (!supabase || !user) return;
@@ -34,7 +37,15 @@ export function ChatPanel() {
       .select('conversation_id, conversations(id,title,updated_at,product_id,order_id)')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
-    if (error) toast.error('Impossible de charger les conversations.');
+    if (error) {
+      setConversationError(error.message);
+      toast.error(`Impossible de charger les conversations : ${error.message}`);
+      setConversations([]);
+      setSelected('');
+      setLoading(false);
+      return;
+    }
+    setConversationError('');
     const list = (data as unknown as Conversation[] | null) ?? [];
     setConversations(list);
     const initial = requested && list.some((item) => item.conversation_id === requested)
@@ -45,22 +56,35 @@ export function ChatPanel() {
 
   const loadMessages = useCallback(async (conversationId: string) => {
     if (!supabase || !conversationId) return;
+    const conversation = conversations.find((item) => item.conversation_id === conversationId)?.conversations;
+    const isServiceConversation = conversation?.title?.startsWith('Devis service #') ?? false;
     const [messageResult, offerResult] = await Promise.all([
       supabase.from('messages').select('id,conversation_id,sender_id,body,created_at').eq('conversation_id', conversationId).order('created_at', { ascending: true }).limit(200),
-      supabase.from('price_offers').select('id,conversation_id,offered_by,amount_xof,note,status,created_at').eq('conversation_id', conversationId).order('created_at', { ascending: false }).limit(20),
+      isServiceConversation
+        ? Promise.resolve({ data: [] as Offer[], error: null })
+        : supabase.from('price_offers').select('id,conversation_id,offered_by,amount_xof,note,status,created_at').eq('conversation_id', conversationId).order('created_at', { ascending: false }).limit(20),
     ]);
-    setMessages((messageResult.data as Message[] | null) ?? []);
-    setOffers((offerResult.data as Offer[] | null) ?? []);
-  }, []);
+    const errors: string[] = [];
+    if (messageResult.error) errors.push(`Messages : ${messageResult.error.message}`);
+    if (offerResult.error) errors.push(`Propositions de prix : ${offerResult.error.message}`);
+    setMessageError(errors.join(' · '));
+    setMessages(messageResult.error ? [] : (messageResult.data as Message[] | null) ?? []);
+    setOffers(offerResult.error ? [] : (offerResult.data as Offer[] | null) ?? []);
+    if (errors.length) toast.error(`Chargement de la discussion incomplet : ${errors.join(' · ')}`);
+  }, [conversations]);
 
   useEffect(() => { void loadConversations(); }, [loadConversations]);
   useEffect(() => {
     if (!selected || !supabase) return;
+    setRealtimeStatus('connecting');
     void loadMessages(selected);
     const channel = supabase.channel(`chat-${selected}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `conversation_id=eq.${selected}` }, () => void loadMessages(selected))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'price_offers', filter: `conversation_id=eq.${selected}` }, () => void loadMessages(selected))
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') setRealtimeStatus('connected');
+        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') setRealtimeStatus('disconnected');
+      });
     return () => { void supabase?.removeChannel(channel); };
   }, [selected, loadMessages]);
 
@@ -79,7 +103,7 @@ export function ChatPanel() {
     const amount = Number(offerAmount);
     if (!Number.isFinite(amount) || amount < 1) { toast.error('Indiquez un prix supérieur à zéro.'); return; }
     const conversation = conversations.find((item) => item.conversation_id === selected)?.conversations;
-    if (!conversation?.product_id) { toast.error('Cette conversation n’est pas rattachée à un produit négociable.'); return; }
+    if (!conversation?.product_id || conversation.title?.startsWith('Devis service #')) { toast.error('Cette conversation n’est pas rattachée à un produit négociable.'); return; }
     const { error } = await supabase.from('price_offers').insert({ conversation_id: selected, product_id: conversation.product_id, offered_by: user.id, amount_xof: Math.round(amount), status: 'pending' });
     if (error) toast.error('La proposition n’a pas pu être enregistrée.');
     else { setOfferAmount(''); toast.success('Proposition enregistrée.'); await loadMessages(selected); }
@@ -95,16 +119,17 @@ export function ChatPanel() {
   if (!isSupabaseConfigured) return <section><h2 className="font-display text-2xl font-extrabold">Messages</h2><div className="mt-5"><SetupNotice /></div></section>;
   return (
     <section>
-      <div className="mb-5"><p className="eyebrow">Échanges sécurisés</p><h2 className="mt-1 font-display text-2xl font-extrabold">Messages & négociation</h2><p className="mt-2 text-sm text-faso-muted">Une offre acceptée confirme le prix proposé, pas le paiement ni la livraison.</p></div>
+      <div className="mb-5"><p className="eyebrow">Échanges sécurisés</p><div className="mt-1 flex flex-wrap items-center justify-between gap-3"><h2 className="font-display text-2xl font-extrabold">Messages & négociation</h2><span role="status" className={`rounded-full px-3 py-1 text-xs font-bold ${realtimeStatus === 'connected' ? 'bg-emerald-50 text-emerald-800' : realtimeStatus === 'connecting' ? 'bg-amber-50 text-amber-800' : 'bg-red-50 text-red-800'}`}>{realtimeStatus === 'connected' ? 'Messagerie en direct' : realtimeStatus === 'connecting' ? 'Connexion en cours…' : 'Temps réel indisponible'}</span></div><p className="mt-2 text-sm text-faso-muted">Une offre acceptée confirme le prix proposé, pas le paiement ni la livraison. Si le temps réel est indisponible, rechargez la discussion pour voir les nouveaux messages.</p></div>
       <div className="grid min-h-[520px] overflow-hidden rounded-3xl border border-faso-line bg-white md:grid-cols-[260px_minmax(0,1fr)]">
         <aside className="border-b border-faso-line bg-faso-ivory/60 p-3 md:border-b-0 md:border-r">
           <p className="px-3 py-2 text-xs font-bold uppercase tracking-wide text-faso-muted">Conversations</p>
-          {loading ? <p className="p-3 text-sm text-faso-muted">Chargement…</p> : conversations.length ? <div className="grid gap-1">{conversations.map((item) => <button key={item.conversation_id} onClick={() => setSelected(item.conversation_id)} className={`rounded-xl p-3 text-left text-sm transition ${selected === item.conversation_id ? 'bg-faso-forest text-white' : 'hover:bg-white'}`}><span className="block truncate font-bold">{item.conversations?.title || (item.conversations?.order_id ? 'Commande' : 'Conversation')}</span><span className={`mt-1 block text-xs ${selected === item.conversation_id ? 'text-white/70' : 'text-faso-muted'}`}>{item.conversations?.updated_at ? formatDate(item.conversations.updated_at) : 'Nouvelle conversation'}</span></button>)}</div> : <p className="px-3 py-2 text-sm leading-6 text-faso-muted">Aucune conversation. Ouvrez une fiche produit pour contacter sa boutique.</p>}
+          {loading ? <p className="p-3 text-sm text-faso-muted">Chargement…</p> : conversationError ? <div className="px-3 py-2 text-sm text-red-800"><p role="alert">Conversations indisponibles : {conversationError}</p><button className="mt-2 font-bold underline" onClick={() => void loadConversations()}>Réessayer</button></div> : conversations.length ? <div className="grid gap-1">{conversations.map((item) => <button key={item.conversation_id} onClick={() => setSelected(item.conversation_id)} className={`rounded-xl p-3 text-left text-sm transition ${selected === item.conversation_id ? 'bg-faso-forest text-white' : 'hover:bg-white'}`}><span className="block truncate font-bold">{item.conversations?.title || (item.conversations?.order_id ? 'Commande' : 'Conversation')}</span><span className={`mt-1 block text-xs ${selected === item.conversation_id ? 'text-white/70' : 'text-faso-muted'}`}>{item.conversations?.updated_at ? formatDate(item.conversations.updated_at) : 'Nouvelle conversation'}</span></button>)}</div> : profile?.role === 'service_provider' ? <p className="px-3 py-2 text-sm leading-6 text-faso-muted">Aucune discussion pour le moment. Les échanges liés aux demandes de prestations apparaîtront ici. <Link className="font-bold text-faso-forest underline" to="/provider/requests">Consulter mes demandes</Link>.</p> : <p className="px-3 py-2 text-sm leading-6 text-faso-muted">Aucune conversation. Ouvrez une fiche produit pour contacter sa boutique.</p>}
         </aside>
         <div className="flex min-h-[420px] flex-col">
           {selected ? <>
             <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
-              {messages.length ? messages.map((message) => <div key={message.id} className={`flex ${message.sender_id === user?.id ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm ${message.sender_id === user?.id ? 'rounded-br-md bg-faso-forest text-white' : 'rounded-bl-md bg-faso-ivory text-faso-ink'}`}><p className="whitespace-pre-wrap">{message.body}</p><p className={`mt-2 text-[10px] ${message.sender_id === user?.id ? 'text-white/60' : 'text-faso-muted'}`}>{formatDate(message.created_at, { hour: '2-digit', minute: '2-digit' })}</p></div></div>) : <p className="py-8 text-center text-sm text-faso-muted">Démarrez la conversation.</p>}
+              {messageError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">Discussion chargée partiellement : {messageError} <button className="font-bold underline" onClick={() => void loadMessages(selected)}>Réessayer</button></p>}
+              {messages.length ? messages.map((message) => <div key={message.id} className={`flex ${message.sender_id === user?.id ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm ${message.sender_id === user?.id ? 'rounded-br-md bg-faso-forest text-white' : 'rounded-bl-md bg-faso-ivory text-faso-ink'}`}><p className="whitespace-pre-wrap">{message.body}</p><p className={`mt-2 text-[10px] ${message.sender_id === user?.id ? 'text-white/60' : 'text-faso-muted'}`}>{formatDate(message.created_at, { hour: '2-digit', minute: '2-digit' })}</p></div></div>) : !messageError && <p className="py-8 text-center text-sm text-faso-muted">Démarrez la conversation.</p>}
               {offers.map((offer) => <div key={offer.id} className="rounded-2xl border border-faso-saffron/40 bg-[#FFF8E8] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wide text-[#8A6200]">Proposition de prix</p><p className="mt-1 font-display text-xl font-extrabold">{formatXof(offer.amount_xof)}</p><p className="mt-1 text-xs text-faso-muted">{offer.status === 'pending' ? 'En attente de réponse' : offer.status === 'accepted' ? 'Acceptée — paiement non confirmé' : 'Refusée'}</p></div>{offer.status === 'pending' && offer.offered_by !== user?.id && <div className="flex gap-2"><button className="btn-secondary !min-h-9 !px-3 !py-2" onClick={() => void respond(offer.id, false)}><X className="h-4 w-4" />Refuser</button><button className="btn-primary !min-h-9 !px-3 !py-2" onClick={() => void respond(offer.id, true)}><Check className="h-4 w-4" />Accepter</button></div>}</div></div>)}
             </div>
             <div className="border-t border-faso-line p-3 sm:p-4"><form onSubmit={sendMessage} className="flex items-end gap-2"><textarea value={body} onChange={(e) => setBody(e.target.value)} className="field min-h-11 resize-y" rows={1} maxLength={3000} placeholder="Écrire un message…" aria-label="Message" /><button className="btn-primary !h-11 !w-11 !min-h-11 !p-0" disabled={sending || !body.trim()} aria-label="Envoyer le message"><Send className="h-4 w-4" /></button></form>{!conversations.find((item) => item.conversation_id === selected)?.conversations?.title?.startsWith('Devis service #') && <div className="mt-3 flex gap-2"><input className="field !max-w-40 !py-2" type="number" min="1" step="1" value={offerAmount} onChange={(e) => setOfferAmount(e.target.value)} placeholder="Prix en FCFA" aria-label="Prix proposé" /><button className="btn-secondary !min-h-9 !px-3 !py-2 text-xs" onClick={() => void sendOffer()}><ArrowUpRight className="h-4 w-4" />Proposer un prix</button></div>}{conversations.find((item) => item.conversation_id === selected)?.conversations?.title?.startsWith('Devis service #') && <p className="mt-2 text-xs text-faso-muted">Pour ce service, répondez au devis depuis les demandes reçues ou échangez les conditions par message.</p>}</div>

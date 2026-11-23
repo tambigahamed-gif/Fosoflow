@@ -51,7 +51,7 @@ export const router = createBrowserRouter([
         { index: true, element: <DashboardPage role="courier" /> }, { path: 'dashboard', element: <DashboardPage role="courier" /> }, { path: 'deliveries', element: <CourierDeliveriesPage /> }, { path: ':section', element: <DashboardPage role="courier" /> },
       ]},
       { path: 'provider', element: <ProtectedRoute allowedRoles={['service_provider']} />, children: [
-        { index: true, element: <ServiceProviderDashboardPage /> }, { path: 'dashboard', element: <ServiceProviderDashboardPage /> }, { path: 'services', element: <ServiceProviderDashboardPage /> }, { path: 'requests', element: <ServiceProviderDashboardPage /> }, { path: 'profile', element: <ServiceProviderDashboardPage /> }, { path: 'messages', element: <ServiceProviderDashboardPage /> },
+        { index: true, element: <ServiceProviderDashboardPage /> }, { path: ':section', element: <ServiceProviderDashboardPage /> },
       ]},
       { path: 'admin', element: <ProtectedRoute allowedRoles={['admin']} />, children: [
         { index: true, element: <DashboardPage role="admin" /> }, { path: 'dashboard', element: <DashboardPage role="admin" /> }, { path: 'payments', element: <AdminPaymentsPage /> }, { path: ':section', element: <AdminOperationsPage /> },

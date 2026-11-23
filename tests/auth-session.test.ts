@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { isCurrentAuthRequest, safeInternalReturnPath } from '../src/app/session-guard';
+import { roleHomeForAccount } from '../src/app/auth';
 
 describe('auth session request guard', () => {
+  it('dirige un prestataire sans profil vers la configuration professionnelle', () => {
+    expect(roleHomeForAccount('service_provider', false)).toBe('/provider/profile');
+    expect(roleHomeForAccount('service_provider', true)).toBe('/provider/dashboard');
+    expect(roleHomeForAccount('client', false)).toBe('/client/dashboard');
+  });
+
   it('accepts the profile result for the current user and revision', () => {
     expect(isCurrentAuthRequest({ revision: 3, userId: 'user-a' }, { revision: 3, userId: 'user-a' })).toBe(true);
   });

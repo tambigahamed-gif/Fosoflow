@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ImagePlus, PackagePlus, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../app/auth';
@@ -11,6 +12,7 @@ const statusLabels: Record<ServiceListing['status'], string> = { pending_review:
 
 export function ProviderServicesManager() {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [services, setServices] = useState<ServiceListing[]>([]);
   const [categories, setCategories] = useState<ServiceCategory[]>([]);
   const [profile, setProfile] = useState<ServiceProviderProfile | null>(null);
@@ -24,31 +26,47 @@ export function ProviderServicesManager() {
   const refresh = useCallback(async () => {
     if (!supabase || !user) { setLoading(false); return; }
     setLoading(true);
-    const [profileResult, serviceResult, categoryResult] = await Promise.all([
-      supabase.from('service_provider_profiles').select('*').eq('user_id', user.id).maybeSingle(),
-      supabase.from('service_listings').select('*').eq('provider_id', user.id).order('created_at', { ascending: false }),
-      supabase.from('service_categories').select('*').eq('is_active', true).order('sort_order').order('name'),
-    ]);
-    const errors = [
-      ['Profil', profileResult.error],
-      ['Prestations', serviceResult.error],
-      ['Catégories', categoryResult.error],
-    ].filter((entry): entry is [string, NonNullable<typeof profileResult.error>] => Boolean(entry[1]));
-    setMigrationMissing(errors.some(([, queryError]) => isMissingServicesMigration(queryError.message)));
-    setError(errors.map(([resource, queryError]) => `${resource} : ${queryError.message}`).join(' · '));
-    if (errors.length) {
-      // Ne pas présenter des données partielles comme si le catalogue était pleinement opérationnel.
+    setError('');
+    try {
+      const [profileResult, serviceResult, categoryResult] = await Promise.all([
+        supabase.from('service_provider_profiles').select('*').eq('user_id', user.id).maybeSingle(),
+        supabase.from('service_listings').select('*').eq('provider_id', user.id).order('created_at', { ascending: false }),
+        supabase.from('service_categories').select('*').eq('is_active', true).order('sort_order').order('name'),
+      ]);
+      const errors = [
+        ['Profil', profileResult.error],
+        ['Prestations', serviceResult.error],
+        ['Catégories', categoryResult.error],
+      ].filter((entry): entry is [string, NonNullable<typeof profileResult.error>] => Boolean(entry[1]));
+      setMigrationMissing(errors.some(([, queryError]) => isMissingServicesMigration(queryError.message)));
+      setError(errors.map(([resource, queryError]) => `${resource} : ${queryError.message}`).join(' · '));
+      if (errors.length) {
+        setProfile(null);
+        setServices([]);
+        setCategories([]);
+      } else {
+        setProfile(profileResult.data as ServiceProviderProfile | null);
+        setServices((serviceResult.data as ServiceListing[] | null) ?? []);
+        setCategories((categoryResult.data as ServiceCategory[] | null) ?? []);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Erreur réseau pendant le chargement.');
       setProfile(null);
       setServices([]);
       setCategories([]);
-    } else {
-      setProfile(profileResult.data as ServiceProviderProfile | null);
-      setServices((serviceResult.data as ServiceListing[] | null) ?? []);
-      setCategories((categoryResult.data as ServiceCategory[] | null) ?? []);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [user]);
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    if (loading || !profile || searchParams.get('create') !== '1') return;
+    setEditing(null);
+    setShowForm(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('create');
+    setSearchParams(next, { replace: true });
+  }, [loading, profile, searchParams, setSearchParams]);
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -79,51 +97,56 @@ export function ProviderServicesManager() {
         return { message: reason instanceof Error ? reason.message : 'Erreur réseau pendant le nettoyage.' };
       }
     };
-    for (const file of selectedFiles) {
-      const ext = file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
-      const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
-      const upload = await supabase.storage.from('service-images').upload(path, file, { upsert: false, contentType: file.type });
-      if (upload.error) {
+    try {
+      for (const file of selectedFiles) {
+        const ext = file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+        const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
+        const upload = await supabase.storage.from('service-images').upload(path, file, { upsert: false, contentType: file.type });
+        if (upload.error) {
+          const cleanupError = await cleanupUploads();
+          toast.error(`Photo non envoyée : ${upload.error.message}${cleanupError ? ` Les photos temporaires n’ont pas pu être supprimées : ${cleanupError.message}` : ''}`);
+          return;
+        }
+        uploadedPaths.push(path);
+        imageUrls.push(supabase.storage.from('service-images').getPublicUrl(path).data.publicUrl);
+      }
+      const payload = {
+        provider_id: user.id,
+        category_id: String(form.get('category_id') ?? '') || null,
+        title,
+        description: String(form.get('description') ?? '').trim(),
+        city: String(form.get('city') ?? '').trim(),
+        service_area: parseServiceArea(String(form.get('service_area') ?? '')),
+        price_min_xof: min,
+        price_max_xof: max,
+        price_unit: String(form.get('price_unit') ?? '').trim() || null,
+        image_urls: imageUrls,
+        status: 'pending_review' as const,
+      };
+      const result = editing
+        ? await supabase.from('service_listings').update(payload).eq('id', editing.id).select('*').single()
+        : await supabase.from('service_listings').insert(payload).select('*').single();
+      if (result.error) {
         const cleanupError = await cleanupUploads();
-        setBusy(false);
-        toast.error(`Photo non envoyée : ${upload.error.message}${cleanupError ? ` Les photos temporaires n’ont pas pu être supprimées : ${cleanupError.message}` : ''}`);
+        toast.error(`Prestation non enregistrée : ${result.error.message}${cleanupError ? ` Les photos temporaires n’ont pas pu être supprimées : ${cleanupError.message}` : ''}`);
         return;
       }
-      uploadedPaths.push(path);
-      imageUrls.push(supabase.storage.from('service-images').getPublicUrl(path).data.publicUrl);
-    }
-    const payload = {
-      provider_id: user.id,
-      category_id: String(form.get('category_id') ?? '') || null,
-      title,
-      description: String(form.get('description') ?? '').trim(),
-      city: String(form.get('city') ?? '').trim(),
-      service_area: parseServiceArea(String(form.get('service_area') ?? '')),
-      price_min_xof: min,
-      price_max_xof: max,
-      price_unit: String(form.get('price_unit') ?? '').trim() || null,
-      image_urls: imageUrls,
-      status: 'pending_review' as const,
-    };
-    const result = editing
-      ? await supabase.from('service_listings').update(payload).eq('id', editing.id).select('*').single()
-      : await supabase.from('service_listings').insert(payload).select('*').single();
-    if (result.error) {
+      toast.success(editing ? 'Modifications enregistrées. La prestation repasse en modération.' : 'Prestation envoyée en modération.');
+      setEditing(null); setShowForm(false); formElement.reset(); await refresh();
+    } catch (reason) {
       const cleanupError = await cleanupUploads();
+      toast.error(`Prestation non enregistrée : ${reason instanceof Error ? reason.message : 'erreur réseau inattendue'}${cleanupError ? ` Les photos temporaires n’ont pas pu être supprimées : ${cleanupError.message}` : ''}`);
+    } finally {
       setBusy(false);
-      toast.error(`Prestation non enregistrée : ${result.error.message}${cleanupError ? ` Les photos temporaires n’ont pas pu être supprimées : ${cleanupError.message}` : ''}`);
-      return;
     }
-    setBusy(false);
-    toast.success(editing ? 'Modifications enregistrées. La prestation repasse en modération.' : 'Prestation envoyée en modération.');
-    setEditing(null); setShowForm(false); formElement.reset(); await refresh();
   }
 
   if (!isSupabaseConfigured) return <SetupNotice />;
-  return <section><div className="flex flex-wrap items-end justify-between gap-4"><div><p className="eyebrow">Votre catalogue professionnel</p><h2 className="mt-1 font-display text-2xl font-extrabold">Mes prestations</h2><p className="mt-2 text-sm text-faso-muted">Les nouvelles prestations et les modifications sont vérifiées avant publication.</p></div><button className="btn-primary" onClick={() => { setEditing(null); setShowForm((value) => !value); }}><PackagePlus className="h-4 w-4" />{showForm ? 'Fermer' : 'Ajouter une prestation'}</button></div>
+  return <section><div className="flex flex-wrap items-end justify-between gap-4"><div><p className="eyebrow">Votre catalogue professionnel</p><h2 className="mt-1 font-display text-2xl font-extrabold">Mes prestations</h2><p className="mt-2 text-sm text-faso-muted">Les nouvelles prestations et les modifications sont vérifiées avant publication.</p></div>{profile ? <button type="button" className="btn-primary" disabled={busy || loading || migrationMissing} aria-expanded={showForm} onClick={() => { setEditing(null); setShowForm((value) => !value); }}><PackagePlus className="h-4 w-4" />{showForm ? 'Fermer le formulaire' : 'Ajouter une prestation'}</button> : <Link className="btn-primary" to="/provider/profile"><PackagePlus className="h-4 w-4" />Compléter mon profil d’abord</Link>}</div>
     {migrationMissing && <p role="status" className="mt-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">La migration 015 n’est pas installée dans le schéma connecté. Le formulaire n’envoie aucune donnée prétendument enregistrée.</p>}
     {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-800">{error}</p>}
-    {!profile && !loading && !migrationMissing && <p className="mt-5 rounded-2xl bg-faso-ivory p-4 text-sm">Complétez d’abord votre <a className="font-bold text-faso-forest" href="/provider/profile">profil professionnel</a>.</p>}
+    {profile && profile.review_status !== 'active' && <p role="status" className="mt-4 rounded-2xl bg-faso-ivory p-4 text-sm leading-6">Votre profil est « {profile.review_status === 'pending_review' ? 'en attente de validation' : profile.review_status === 'rejected' ? 'à corriger' : 'suspendu'} ». Les prestations peuvent être préparées, mais la vitrine publique ne s’active qu’après validation.</p>}
+    {!profile && !loading && !migrationMissing && <p className="mt-5 rounded-2xl bg-faso-ivory p-4 text-sm">Complétez d’abord votre <Link className="font-bold text-faso-forest underline" to="/provider/profile">profil professionnel</Link>.</p>}
     {showForm && !migrationMissing && profile && <form onSubmit={(event) => void save(event)} className="card-surface mt-5 grid gap-4 p-5 sm:grid-cols-2">
       <h3 className="font-display text-lg font-extrabold sm:col-span-2">{editing ? `Modifier ${editing.title}` : 'Nouvelle prestation'}</h3>
       <label className="label">Titre<input className="field mt-1" name="title" required minLength={3} maxLength={160} defaultValue={editing?.title ?? ''} /></label>

@@ -13,3 +13,8 @@ export function roleHome(role: AppRole) {
   if (role === 'service_provider') return '/provider/dashboard';
   return `/${role}/dashboard`;
 }
+
+export function roleHomeForAccount(role: AppRole, hasProviderProfile = true) {
+  if (role === 'service_provider' && !hasProviderProfile) return '/provider/profile';
+  return roleHome(role);
+}

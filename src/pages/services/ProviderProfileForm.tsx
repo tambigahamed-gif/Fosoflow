@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useAuth } from '../../app/auth';
 import { SetupNotice } from '../../components/ui/Callout';
@@ -12,6 +13,7 @@ const statusLabels: Record<ServiceProviderProfile['review_status'], string> = {
 
 export function ProviderProfileForm() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [profile, setProfile] = useState<ServiceProviderProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -35,23 +37,30 @@ export function ProviderProfileForm() {
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!supabase || !user) return;
+    const isFirstProfile = !profile;
     const form = new FormData(event.currentTarget);
     const displayName = String(form.get('display_name') ?? '').trim();
     const bio = String(form.get('bio') ?? '').trim();
     if (displayName.length < 2) { toast.error('Le nom professionnel doit contenir au moins deux caractères.'); return; }
     setBusy(true);
-    const result = await supabase.from('service_provider_profiles').upsert({
-      user_id: user.id,
-      display_name: displayName,
-      bio,
-      city: String(form.get('city') ?? '').trim(),
-      service_area: parseServiceArea(String(form.get('service_area') ?? '')),
-      public_contact_phone: String(form.get('public_contact_phone') ?? '').trim() || null,
-    }, { onConflict: 'user_id' }).select('*').single();
-    setBusy(false);
-    if (result.error) { toast.error(`Profil non enregistré : ${result.error.message}`); return; }
-    setProfile(result.data as ServiceProviderProfile);
-    toast.success('Profil enregistré et envoyé en vérification.');
+    try {
+      const result = await supabase.from('service_provider_profiles').upsert({
+        user_id: user.id,
+        display_name: displayName,
+        bio,
+        city: String(form.get('city') ?? '').trim(),
+        service_area: parseServiceArea(String(form.get('service_area') ?? '')),
+        public_contact_phone: String(form.get('public_contact_phone') ?? '').trim() || null,
+      }, { onConflict: 'user_id' }).select('*').single();
+      if (result.error) { toast.error(`Profil non enregistré : ${result.error.message}`); return; }
+      setProfile(result.data as ServiceProviderProfile);
+      toast.success('Profil enregistré et envoyé en vérification.');
+      if (isFirstProfile) navigate('/provider/services?create=1');
+    } catch (reason) {
+      toast.error(`Profil non enregistré : ${reason instanceof Error ? reason.message : 'erreur réseau inattendue'}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (!isSupabaseConfigured) return <SetupNotice />;

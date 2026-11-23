@@ -32,45 +32,56 @@ export function ChatPanel() {
 
   const loadConversations = useCallback(async () => {
     if (!supabase || !user) return;
-    const { data, error } = await supabase
-      .from('conversation_participants')
-      .select('conversation_id, conversations(id,title,updated_at,product_id,order_id)')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
-    if (error) {
-      setConversationError(error.message);
-      toast.error(`Impossible de charger les conversations : ${error.message}`);
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('conversation_participants')
+        .select('conversation_id, conversations(id,title,updated_at,product_id,order_id)')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setConversationError('');
+      const list = (data as unknown as Conversation[] | null) ?? [];
+      setConversations(list);
+      const initial = requested && list.some((item) => item.conversation_id === requested)
+        ? requested : list[0]?.conversation_id ?? '';
+      setSelected((current) => current || initial);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : 'erreur réseau inattendue';
+      setConversationError(message);
+      toast.error(`Impossible de charger les conversations : ${message}`);
       setConversations([]);
       setSelected('');
+    } finally {
       setLoading(false);
-      return;
     }
-    setConversationError('');
-    const list = (data as unknown as Conversation[] | null) ?? [];
-    setConversations(list);
-    const initial = requested && list.some((item) => item.conversation_id === requested)
-      ? requested : list[0]?.conversation_id ?? '';
-    setSelected((current) => current || initial);
-    setLoading(false);
   }, [requested, user]);
 
   const loadMessages = useCallback(async (conversationId: string) => {
     if (!supabase || !conversationId) return;
     const conversation = conversations.find((item) => item.conversation_id === conversationId)?.conversations;
     const isServiceConversation = conversation?.title?.startsWith('Devis service #') ?? false;
-    const [messageResult, offerResult] = await Promise.all([
-      supabase.from('messages').select('id,conversation_id,sender_id,body,created_at').eq('conversation_id', conversationId).order('created_at', { ascending: true }).limit(200),
-      isServiceConversation
-        ? Promise.resolve({ data: [] as Offer[], error: null })
-        : supabase.from('price_offers').select('id,conversation_id,offered_by,amount_xof,note,status,created_at').eq('conversation_id', conversationId).order('created_at', { ascending: false }).limit(20),
-    ]);
-    const errors: string[] = [];
-    if (messageResult.error) errors.push(`Messages : ${messageResult.error.message}`);
-    if (offerResult.error) errors.push(`Propositions de prix : ${offerResult.error.message}`);
-    setMessageError(errors.join(' · '));
-    setMessages(messageResult.error ? [] : (messageResult.data as Message[] | null) ?? []);
-    setOffers(offerResult.error ? [] : (offerResult.data as Offer[] | null) ?? []);
-    if (errors.length) toast.error(`Chargement de la discussion incomplet : ${errors.join(' · ')}`);
+    try {
+      const [messageResult, offerResult] = await Promise.all([
+        supabase.from('messages').select('id,conversation_id,sender_id,body,created_at').eq('conversation_id', conversationId).order('created_at', { ascending: true }).limit(200),
+        isServiceConversation
+          ? Promise.resolve({ data: [] as Offer[], error: null })
+          : supabase.from('price_offers').select('id,conversation_id,offered_by,amount_xof,note,status,created_at').eq('conversation_id', conversationId).order('created_at', { ascending: false }).limit(20),
+      ]);
+      const errors: string[] = [];
+      if (messageResult.error) errors.push(`Messages : ${messageResult.error.message}`);
+      if (offerResult.error) errors.push(`Propositions de prix : ${offerResult.error.message}`);
+      setMessageError(errors.join(' · '));
+      setMessages(messageResult.error ? [] : (messageResult.data as Message[] | null) ?? []);
+      setOffers(offerResult.error ? [] : (offerResult.data as Offer[] | null) ?? []);
+      if (errors.length) toast.error(`Chargement de la discussion incomplet : ${errors.join(' · ')}`);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : 'erreur réseau inattendue';
+      setMessageError(message);
+      setMessages([]);
+      setOffers([]);
+      toast.error(`Discussion non chargée : ${message}`);
+    }
   }, [conversations]);
 
   useEffect(() => { void loadConversations(); }, [loadConversations]);
@@ -92,10 +103,15 @@ export function ChatPanel() {
     event.preventDefault();
     if (!supabase || !user || !selected || !body.trim()) return;
     setSending(true);
-    const { error } = await supabase.from('messages').insert({ conversation_id: selected, sender_id: user.id, body: body.trim() });
-    setSending(false);
-    if (error) toast.error('Message non envoyé. Vérifiez l’accès à la conversation.');
-    else { setBody(''); await loadMessages(selected); }
+    try {
+      const { error } = await supabase.from('messages').insert({ conversation_id: selected, sender_id: user.id, body: body.trim() });
+      if (error) toast.error(`Message non envoyé : ${error.message}`);
+      else { setBody(''); await loadMessages(selected); }
+    } catch (reason) {
+      toast.error(`Message non envoyé : ${reason instanceof Error ? reason.message : 'erreur réseau inattendue'}`);
+    } finally {
+      setSending(false);
+    }
   }
 
   async function sendOffer() {
@@ -104,16 +120,24 @@ export function ChatPanel() {
     if (!Number.isFinite(amount) || amount < 1) { toast.error('Indiquez un prix supérieur à zéro.'); return; }
     const conversation = conversations.find((item) => item.conversation_id === selected)?.conversations;
     if (!conversation?.product_id || conversation.title?.startsWith('Devis service #')) { toast.error('Cette conversation n’est pas rattachée à un produit négociable.'); return; }
-    const { error } = await supabase.from('price_offers').insert({ conversation_id: selected, product_id: conversation.product_id, offered_by: user.id, amount_xof: Math.round(amount), status: 'pending' });
-    if (error) toast.error('La proposition n’a pas pu être enregistrée.');
-    else { setOfferAmount(''); toast.success('Proposition enregistrée.'); await loadMessages(selected); }
+    try {
+      const { error } = await supabase.from('price_offers').insert({ conversation_id: selected, product_id: conversation.product_id, offered_by: user.id, amount_xof: Math.round(amount), status: 'pending' });
+      if (error) toast.error(`Proposition non enregistrée : ${error.message}`);
+      else { setOfferAmount(''); toast.success('Proposition enregistrée.'); await loadMessages(selected); }
+    } catch (reason) {
+      toast.error(`Proposition non enregistrée : ${reason instanceof Error ? reason.message : 'erreur réseau inattendue'}`);
+    }
   }
 
   async function respond(offerId: string, accept: boolean) {
     if (!supabase) return;
-    const { error } = await supabase.rpc('respond_to_price_offer', { p_offer_id: offerId, p_accept: accept });
-    if (error) toast.error('Décision non enregistrée.');
-    else { toast.success(accept ? 'Offre acceptée. Le paiement n’est pas confirmé.' : 'Offre refusée.'); if (selected) await loadMessages(selected); }
+    try {
+      const { error } = await supabase.rpc('respond_to_price_offer', { p_offer_id: offerId, p_accept: accept });
+      if (error) toast.error(`Décision non enregistrée : ${error.message}`);
+      else { toast.success(accept ? 'Offre acceptée. Le paiement n’est pas confirmé.' : 'Offre refusée.'); if (selected) await loadMessages(selected); }
+    } catch (reason) {
+      toast.error(`Décision non enregistrée : ${reason instanceof Error ? reason.message : 'erreur réseau inattendue'}`);
+    }
   }
 
   if (!isSupabaseConfigured) return <section><h2 className="font-display text-2xl font-extrabold">Messages</h2><div className="mt-5"><SetupNotice /></div></section>;

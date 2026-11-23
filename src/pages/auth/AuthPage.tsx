@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Eye, EyeOff, Mail, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
-import { useAuth, roleHome } from '../../app/auth';
+import { useAuth, roleHomeForAccount } from '../../app/auth';
 import { safeInternalReturnPath } from '../../app/session-guard';
 import { LoadingState } from '../../components/ui/Callout';
 import { isMissingServicesMigration } from '../../features/services/service-utils';
@@ -11,6 +11,24 @@ import type { AppRole } from '../../types';
 
 type AuthMode = 'login' | 'signup' | 'forgot' | 'reset' | 'confirm';
 const selectableRoles: AppRole[] = ['client', 'merchant', 'courier', 'service_provider'];
+
+async function resolveAuthDestination(role: AppRole, userId: string, returnPath: string | null) {
+  if (returnPath) return returnPath;
+  let hasProviderProfile = false;
+  if (role === 'service_provider' && supabase) {
+    try {
+      const { data, error: profileError } = await supabase
+        .from('service_provider_profiles')
+        .select('user_id')
+        .eq('user_id', userId)
+        .maybeSingle();
+      hasProviderProfile = !profileError && Boolean(data);
+    } catch {
+      // En cas de réseau indisponible, le formulaire de profil expose le message et permet de réessayer.
+    }
+  }
+  return roleHomeForAccount(role, hasProviderProfile);
+}
 
 export function AuthPage({ mode }: { mode: AuthMode }) {
   const [search, setSearch] = useSearchParams();
@@ -21,14 +39,21 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
   const [providerSchemaStatus, setProviderSchemaStatus] = useState<'checking' | 'ready' | 'missing' | 'unavailable'>('checking');
   const { user, profile, loading, refreshProfile } = useAuth();
   const navigate = useNavigate();
+  const userId = user?.id;
+  const profileRole = profile?.role;
   const requestedRole = search.get('role') as AppRole | null;
   const nextPath = safeInternalReturnPath(search.get('next'));
   const [role, setRole] = useState<AppRole>(requestedRole && selectableRoles.includes(requestedRole) ? requestedRole : 'client');
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (user && profile && (mode === 'login' || mode === 'signup' || mode === 'confirm')) navigate(nextPath ?? roleHome(profile.role), { replace: true });
-  }, [user, profile, mode, navigate, nextPath]);
+    if (!userId || !profileRole || !['login', 'signup', 'confirm'].includes(mode)) return;
+    let active = true;
+    void resolveAuthDestination(profileRole, userId, nextPath).then((destination) => {
+      if (active) navigate(destination, { replace: true });
+    });
+    return () => { active = false; };
+  }, [userId, profileRole, mode, navigate, nextPath]);
   useEffect(() => {
     if (mode === 'confirm' && !loading && !user) setNotice('Vérifiez votre boîte e-mail et ouvrez le lien de confirmation reçu.');
   }, [mode, loading, user]);
@@ -63,7 +88,7 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
         if (authError) throw authError;
         const { data: profileRow, error: profileError } = await supabase.from('profiles').select('role').eq('id', data.user.id).maybeSingle();
         if (profileError || !profileRow) throw new Error('Profil introuvable. Confirmez votre e-mail ou contactez l’administrateur.');
-        navigate(nextPath ?? roleHome(profileRow.role as AppRole), { replace: true });
+        navigate(await resolveAuthDestination(profileRow.role as AppRole, data.user.id, nextPath), { replace: true });
       } else if (mode === 'signup') {
         const fullName = String(form.get('full_name') ?? '').trim();
         const phone = String(form.get('phone') ?? '').trim();
@@ -72,17 +97,20 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
           throw new Error(providerSchemaStatus === 'missing' ? 'La migration locale 015 doit être vérifiée puis appliquée par l’administrateur Supabase avant les inscriptions prestataire.' : 'Le schéma prestataire ne peut pas être vérifié pour le moment. Réessayez plus tard ou contactez l’administrateur.');
         }
         if (password.length < 8) throw new Error('Le mot de passe doit contenir au moins 8 caractères.');
+        const returnPath = nextPath ?? (role === 'service_provider' ? '/provider/profile' : null);
         const { data, error: authError } = await supabase.auth.signUp({
           email,
           password,
           options: {
-            emailRedirectTo: `${window.location.origin}/account/confirm${nextPath ? `?next=${encodeURIComponent(nextPath)}` : ''}`,
+            emailRedirectTo: `${window.location.origin}/account/confirm${returnPath ? `?next=${encodeURIComponent(returnPath)}` : ''}`,
             data: { role, full_name: fullName, phone: phone || null },
           },
         });
         if (authError) throw authError;
-        if (data.session) navigate(nextPath ?? roleHome(role), { replace: true });
-        else setNotice('Votre compte est créé. Consultez votre e-mail pour confirmer l’adresse avant la première connexion.');
+        if (data.session && data.user) navigate(await resolveAuthDestination(role, data.user.id, returnPath), { replace: true });
+        else setNotice(role === 'service_provider'
+          ? 'Votre compte prestataire est créé. Confirmez votre adresse e-mail ; vous serez ensuite dirigé vers la création de votre profil professionnel.'
+          : 'Votre compte est créé. Consultez votre e-mail pour confirmer l’adresse avant la première connexion.');
       } else if (mode === 'forgot') {
         const { error: authError } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/reset-password` });
         if (authError) throw authError;

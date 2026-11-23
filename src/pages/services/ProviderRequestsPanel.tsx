@@ -17,16 +17,27 @@ export function ProviderRequestsPanel() {
   const [rows, setRows] = useState<RequestRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [migrationMissing, setMigrationMissing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!supabase || !user) { setLoading(false); return; }
-    const { data, error } = await supabase.from('service_requests').select('*,service_listings(title)').eq('provider_id', user.id).order('created_at', { ascending: false });
-    const message = error?.message ?? '';
-    setMigrationMissing(Boolean(error && isMissingServicesMigration(message)));
-    if (error && !isMissingServicesMigration(message)) toast.error(`Demandes non chargées : ${message}`);
-    setRows((data as unknown as RequestRow[] | null) ?? []);
-    setLoading(false);
+    setLoading(true);
+    setErrorMessage('');
+    try {
+      const { data, error } = await supabase.from('service_requests').select('*,service_listings(title)').eq('provider_id', user.id).order('created_at', { ascending: false });
+      const message = error?.message ?? '';
+      setMigrationMissing(Boolean(error && isMissingServicesMigration(message)));
+      if (error && !isMissingServicesMigration(message)) { setErrorMessage(message); toast.error(`Demandes non chargées : ${message}`); }
+      setRows((data as unknown as RequestRow[] | null) ?? []);
+    } catch (reason) {
+      setRows([]);
+      const message = reason instanceof Error ? reason.message : 'erreur réseau inattendue';
+      setErrorMessage(message);
+      toast.error(`Demandes non chargées : ${message}`);
+    } finally {
+      setLoading(false);
+    }
   }, [user]);
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -38,29 +49,45 @@ export function ProviderRequestsPanel() {
     const message = String(form.get('quote_message') ?? '').trim();
     if (!Number.isSafeInteger(amount) || amount < 0) { toast.error('Saisissez un tarif valide en XOF.'); return; }
     setBusy(request.id);
-    const { error } = await supabase.rpc('respond_service_request', { p_request_id: request.id, p_status: 'quoted', p_quoted_price_xof: amount, p_quote_message: message || null });
-    setBusy(null);
-    if (error) toast.error(`Devis non envoyé : ${error.message}`); else { toast.success('Devis enregistré. Le client peut le consulter et discuter avec vous.'); await refresh(); }
+    try {
+      const { error } = await supabase.rpc('respond_service_request', { p_request_id: request.id, p_status: 'quoted', p_quoted_price_xof: amount, p_quote_message: message || null });
+      if (error) toast.error(`Devis non envoyé : ${error.message}`); else { toast.success('Devis enregistré. Le client peut le consulter et discuter avec vous.'); await refresh(); }
+    } catch (reason) {
+      toast.error(`Devis non envoyé : ${reason instanceof Error ? reason.message : 'erreur réseau inattendue'}`);
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function decline(id: string) {
     if (!supabase) return;
     setBusy(id);
-    const { error } = await supabase.rpc('respond_service_request', { p_request_id: id, p_status: 'declined', p_quoted_price_xof: null, p_quote_message: null });
-    setBusy(null);
-    if (error) toast.error(error.message); else { toast.success('Demande marquée comme indisponible.'); await refresh(); }
+    try {
+      const { error } = await supabase.rpc('respond_service_request', { p_request_id: id, p_status: 'declined', p_quoted_price_xof: null, p_quote_message: null });
+      if (error) toast.error(`Demande non mise à jour : ${error.message}`); else { toast.success('Demande marquée comme indisponible.'); await refresh(); }
+    } catch (reason) {
+      toast.error(`Demande non mise à jour : ${reason instanceof Error ? reason.message : 'erreur réseau inattendue'}`);
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function openConversation(id: string) {
     if (!supabase) return;
-    const { data, error } = await supabase.rpc('get_or_create_service_conversation', { p_request_id: id });
-    if (error) toast.error(`Conversation indisponible : ${error.message}`);
-    else navigate(`/provider/messages?conversation=${encodeURIComponent(String(data))}`);
+    try {
+      const { data, error } = await supabase.rpc('get_or_create_service_conversation', { p_request_id: id });
+      if (error) toast.error(`Conversation indisponible : ${error.message}`);
+      else if (!data) toast.error('La conversation n’a pas été renvoyée par Supabase.');
+      else navigate(`/provider/messages?conversation=${encodeURIComponent(String(data))}`);
+    } catch (reason) {
+      toast.error(`Conversation indisponible : ${reason instanceof Error ? reason.message : 'erreur réseau inattendue'}`);
+    }
   }
 
   if (!isSupabaseConfigured) return <SetupNotice />;
   return <section><p className="eyebrow">Échanges professionnels</p><h2 className="mt-1 font-display text-2xl font-extrabold">Demandes reçues</h2><p className="mt-2 text-sm leading-6 text-faso-muted">Répondez avec un prix et des conditions. Le devis n’entraîne ni réservation automatique ni paiement sur FasoFlow.</p>
     {migrationMissing && <p role="status" className="mt-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">Les demandes nécessitent la migration locale 015.</p>}
+    {errorMessage && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-800">Impossible de charger les demandes : {errorMessage}</p>}
     {loading ? <div className="mt-5 h-36 animate-pulse rounded-3xl bg-white" /> : !migrationMissing && <div className="mt-5 grid gap-4">{rows.length ? rows.map((request) => <article key={request.id} className="card-surface p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-display text-lg font-extrabold">{request.service_listings?.title ?? 'Demande de prestation'}</p><p className="mt-1 text-xs text-faso-muted">Demande #{request.id.slice(0, 8)} · {formatDate(request.created_at)}</p></div><span className="badge-soft">{serviceRequestStatusLabels[request.status]}</span></div><p className="mt-4 whitespace-pre-line text-sm leading-6">{request.message}</p>{(request.requested_at || request.requested_location) && <p className="mt-2 text-xs text-faso-muted">Préférence client : {request.requested_at ? formatDate(request.requested_at) : ''}{request.requested_at && request.requested_location ? ' · ' : ''}{request.requested_location ?? ''}</p>}
       {request.quoted_price_xof !== null && <div className="mt-4 rounded-2xl bg-faso-ivory p-4"><p className="text-xs font-bold uppercase tracking-wide text-faso-muted">Devis envoyé</p><p className="mt-1 font-display text-xl font-extrabold text-faso-forest">{formatXof(request.quoted_price_xof)}</p>{request.quote_message && <p className="mt-2 whitespace-pre-line text-sm">{request.quote_message}</p>}</div>}
       <div className="mt-4 flex flex-wrap gap-2"><button className="btn-secondary !min-h-9 !px-3 !py-2" onClick={() => void openConversation(request.id)}><MessageCircle className="h-4 w-4" />Ouvrir la discussion</button>{['requested','quoted'].includes(request.status) && <button className="btn-secondary !min-h-9 !px-3 !py-2 text-faso-terracotta" disabled={busy === request.id} onClick={() => void decline(request.id)}>Indisponible</button>}</div>

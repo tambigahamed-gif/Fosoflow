@@ -148,18 +148,23 @@ export function ServicePage() {
     const localDate = String(form.get('requested_at') ?? '');
     const requestedAt = localDate ? new Date(localDate).toISOString() : null;
     setBusy(true);
-    const result = await supabase.rpc('create_service_request', {
-      p_service_id: service.id,
-      p_message: String(form.get('message') ?? '').trim(),
-      p_requested_at: requestedAt,
-      p_requested_location: String(form.get('requested_location') ?? '').trim() || null,
-    });
-    if (result.error) { setBusy(false); toast.error(`Demande non envoyée : ${result.error.message}`); return; }
-    const conversation = await supabase.rpc('get_or_create_service_conversation', { p_request_id: result.data });
-    setBusy(false);
-    if (conversation.error) { toast.success('Demande enregistrée. Vous pourrez retrouver le professionnel dans vos demandes de devis.'); navigate('/client/service-requests'); return; }
-    toast.success('Demande de devis envoyée. Vous pouvez poursuivre la discussion.');
-    navigate(`/client/messages?conversation=${encodeURIComponent(String(conversation.data))}`);
+    try {
+      const result = await supabase.rpc('create_service_request', {
+        p_service_id: service.id,
+        p_message: String(form.get('message') ?? '').trim(),
+        p_requested_at: requestedAt,
+        p_requested_location: String(form.get('requested_location') ?? '').trim() || null,
+      });
+      if (result.error) { toast.error(`Demande non envoyée : ${result.error.message}`); return; }
+      const conversation = await supabase.rpc('get_or_create_service_conversation', { p_request_id: result.data });
+      if (conversation.error) { toast.success('Demande enregistrée. Vous pourrez retrouver le professionnel dans vos demandes de devis.'); navigate('/client/service-requests'); return; }
+      toast.success('Demande de devis envoyée. Vous pouvez poursuivre la discussion.');
+      navigate(`/client/messages?conversation=${encodeURIComponent(String(conversation.data))}`);
+    } catch (reason) {
+      toast.error(`Demande non envoyée : ${reason instanceof Error ? reason.message : 'erreur réseau inattendue'}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (loading) return <section className="page-wrap py-16"><LoadingState /></section>;

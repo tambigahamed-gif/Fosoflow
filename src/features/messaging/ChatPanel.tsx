@@ -16,7 +16,7 @@ interface Offer { id: string; conversation_id: string; offered_by: string; amoun
 
 export function ChatPanel() {
   const { user, profile } = useAuth();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const requested = params.get('conversation');
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selected, setSelected] = useState('');
@@ -28,7 +28,8 @@ export function ChatPanel() {
   const [sending, setSending] = useState(false);
   const [conversationError, setConversationError] = useState('');
   const [messageError, setMessageError] = useState('');
-  const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  const [realtimeStatus, setRealtimeStatus] = useState<'idle' | 'connecting' | 'connected' | 'disconnected'>('idle');
+  const [realtimeAttempt, setRealtimeAttempt] = useState(0);
 
   const loadConversations = useCallback(async () => {
     if (!supabase || !user) return;
@@ -43,9 +44,10 @@ export function ChatPanel() {
       setConversationError('');
       const list = (data as unknown as Conversation[] | null) ?? [];
       setConversations(list);
-      const initial = requested && list.some((item) => item.conversation_id === requested)
-        ? requested : list[0]?.conversation_id ?? '';
-      setSelected((current) => current || initial);
+      setSelected((current) => {
+        if (requested && list.some((item) => item.conversation_id === requested)) return requested;
+        return list.some((item) => item.conversation_id === current) ? current : list[0]?.conversation_id ?? '';
+      });
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : 'erreur réseau inattendue';
       setConversationError(message);
@@ -86,7 +88,8 @@ export function ChatPanel() {
 
   useEffect(() => { void loadConversations(); }, [loadConversations]);
   useEffect(() => {
-    if (!selected || !supabase) return;
+    if (!selected) { setRealtimeStatus('idle'); return; }
+    if (!supabase) { setRealtimeStatus('disconnected'); return; }
     setRealtimeStatus('connecting');
     void loadMessages(selected);
     const channel = supabase.channel(`chat-${selected}`)
@@ -97,7 +100,7 @@ export function ChatPanel() {
         else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') setRealtimeStatus('disconnected');
       });
     return () => { void supabase?.removeChannel(channel); };
-  }, [selected, loadMessages]);
+  }, [selected, loadMessages, realtimeAttempt]);
 
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
@@ -143,11 +146,11 @@ export function ChatPanel() {
   if (!isSupabaseConfigured) return <section><h2 className="font-display text-2xl font-extrabold">Messages</h2><div className="mt-5"><SetupNotice /></div></section>;
   return (
     <section>
-      <div className="mb-5"><p className="eyebrow">Échanges sécurisés</p><div className="mt-1 flex flex-wrap items-center justify-between gap-3"><h2 className="font-display text-2xl font-extrabold">Messages & négociation</h2><span role="status" className={`rounded-full px-3 py-1 text-xs font-bold ${realtimeStatus === 'connected' ? 'bg-emerald-50 text-emerald-800' : realtimeStatus === 'connecting' ? 'bg-amber-50 text-amber-800' : 'bg-red-50 text-red-800'}`}>{realtimeStatus === 'connected' ? 'Messagerie en direct' : realtimeStatus === 'connecting' ? 'Connexion en cours…' : 'Temps réel indisponible'}</span></div><p className="mt-2 text-sm text-faso-muted">Une offre acceptée confirme le prix proposé, pas le paiement ni la livraison. Si le temps réel est indisponible, rechargez la discussion pour voir les nouveaux messages.</p></div>
+      <div className="mb-5"><p className="eyebrow">Échanges sécurisés</p><div className="mt-1 flex flex-wrap items-center justify-between gap-3"><h2 className="font-display text-2xl font-extrabold">Messages & négociation</h2><div className="flex flex-wrap items-center gap-2"><span role="status" className={`rounded-full px-3 py-1 text-xs font-bold ${realtimeStatus === 'connected' ? 'bg-emerald-50 text-emerald-800' : realtimeStatus === 'connecting' ? 'bg-amber-50 text-amber-800' : realtimeStatus === 'disconnected' ? 'bg-red-50 text-red-800' : 'bg-faso-ivory text-faso-muted'}`}>{realtimeStatus === 'connected' ? 'Messagerie en direct' : realtimeStatus === 'connecting' ? 'Connexion en cours…' : realtimeStatus === 'disconnected' ? 'Temps réel indisponible' : loading ? 'Chargement des conversations…' : conversationError ? 'État non vérifiable' : conversations.length ? 'Choisissez une discussion' : 'Aucune discussion'}</span>{selected && realtimeStatus === 'disconnected' && <button type="button" onClick={() => setRealtimeAttempt((attempt) => attempt + 1)} className="min-h-9 rounded-full border border-faso-line bg-white px-3 text-xs font-bold text-faso-forest hover:bg-faso-ivory">Réessayer le direct</button>}</div></div><p className="mt-2 text-sm text-faso-muted">Une offre acceptée confirme le prix proposé, pas le paiement ni la livraison. Le statut en direct ne s’applique qu’à la discussion sélectionnée.</p></div>
       <div className="grid min-h-[520px] overflow-hidden rounded-3xl border border-faso-line bg-white md:grid-cols-[260px_minmax(0,1fr)]">
-        <aside className="border-b border-faso-line bg-faso-ivory/60 p-3 md:border-b-0 md:border-r">
+        <aside className="max-h-64 overflow-y-auto border-b border-faso-line bg-faso-ivory/60 p-3 md:max-h-none md:border-b-0 md:border-r">
           <p className="px-3 py-2 text-xs font-bold uppercase tracking-wide text-faso-muted">Conversations</p>
-          {loading ? <p className="p-3 text-sm text-faso-muted">Chargement…</p> : conversationError ? <div className="px-3 py-2 text-sm text-red-800"><p role="alert">Conversations indisponibles : {conversationError}</p><button className="mt-2 font-bold underline" onClick={() => void loadConversations()}>Réessayer</button></div> : conversations.length ? <div className="grid gap-1">{conversations.map((item) => <button key={item.conversation_id} onClick={() => setSelected(item.conversation_id)} className={`rounded-xl p-3 text-left text-sm transition ${selected === item.conversation_id ? 'bg-faso-forest text-white' : 'hover:bg-white'}`}><span className="block truncate font-bold">{item.conversations?.title || (item.conversations?.order_id ? 'Commande' : 'Conversation')}</span><span className={`mt-1 block text-xs ${selected === item.conversation_id ? 'text-white/70' : 'text-faso-muted'}`}>{item.conversations?.updated_at ? formatDate(item.conversations.updated_at) : 'Nouvelle conversation'}</span></button>)}</div> : profile?.role === 'service_provider' ? <p className="px-3 py-2 text-sm leading-6 text-faso-muted">Aucune discussion pour le moment. Les échanges liés aux demandes de prestations apparaîtront ici. <Link className="font-bold text-faso-forest underline" to="/provider/requests">Consulter mes demandes</Link>.</p> : <p className="px-3 py-2 text-sm leading-6 text-faso-muted">Aucune conversation. Ouvrez une fiche produit pour contacter sa boutique.</p>}
+          {loading ? <p className="p-3 text-sm text-faso-muted">Chargement…</p> : conversationError ? <div className="px-3 py-2 text-sm text-red-800"><p role="alert">Conversations indisponibles : {conversationError}</p><button type="button" className="mt-2 min-h-11 font-bold underline" onClick={() => void loadConversations()}>Réessayer</button></div> : conversations.length ? <div className="grid gap-1">{conversations.map((item) => <button type="button" key={item.conversation_id} onClick={() => { setSelected(item.conversation_id); const next = new URLSearchParams(params); next.set('conversation', item.conversation_id); setParams(next, { replace: true }); }} aria-current={selected === item.conversation_id ? 'true' : undefined} className={`min-h-11 rounded-xl p-3 text-left text-sm transition ${selected === item.conversation_id ? 'bg-faso-forest text-white' : 'hover:bg-white'}`}><span className="block truncate font-bold">{item.conversations?.title || (item.conversations?.order_id ? 'Commande' : 'Conversation')}</span><span className={`mt-1 block text-xs ${selected === item.conversation_id ? 'text-white/70' : 'text-faso-muted'}`}>{item.conversations?.updated_at ? formatDate(item.conversations.updated_at) : 'Nouvelle conversation'}</span></button>)}</div> : profile?.role === 'service_provider' ? <p className="px-3 py-2 text-sm leading-6 text-faso-muted">Aucune discussion pour le moment. Les échanges liés aux demandes de prestations apparaîtront ici. <Link className="font-bold text-faso-forest underline" to="/provider/requests">Consulter mes demandes</Link>.</p> : <p className="px-3 py-2 text-sm leading-6 text-faso-muted">Aucune conversation. Ouvrez une fiche produit pour contacter sa boutique.</p>}
         </aside>
         <div className="flex min-h-[420px] flex-col">
           {selected ? <>

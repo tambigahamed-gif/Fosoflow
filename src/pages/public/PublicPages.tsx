@@ -25,6 +25,7 @@ export function HomePage() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [searchKind, setSearchKind] = useState<'products' | 'services' | 'shops' | 'merchants' | 'providers'>('products');
+  const [reloadKey, setReloadKey] = useState(0);
   const navigate = useNavigate();
   useEffect(() => {
     if (!supabase) return;
@@ -32,7 +33,7 @@ export function HomePage() {
     void supabase.from('products').select('*, shops!inner(id,name,city,logo_url,slug)').eq('status', 'active').eq('shops.status', 'active').order('created_at', { ascending: false }).limit(4)
       .then(({ data, error: queryError }) => { if (alive) { setProducts((data as Product[] | null) ?? []); setError(queryError?.message ?? ''); setLoading(false); } }, (reason: unknown) => { if (alive) { setError(reason instanceof Error ? reason.message : 'Vérifiez votre connexion puis réessayez.'); setLoading(false); } });
     return () => { alive = false; };
-  }, []);
+  }, [reloadKey]);
   function submitSearch(e: FormEvent) {
     e.preventDefault();
     const params = new URLSearchParams();
@@ -76,7 +77,7 @@ export function HomePage() {
 
     <section className="bg-white py-16 sm:py-20">
       <div className="page-wrap"><div className="mb-8 flex items-end justify-between gap-4"><div><p className="eyebrow">Sélection locale</p><h2 className="section-title mt-2">À découvrir maintenant</h2><p className="mt-2 text-sm text-faso-muted">Prix affichés en FCFA (XOF).</p></div><Link to="/marketplace" className="hidden items-center gap-2 text-sm font-bold text-faso-forest sm:inline-flex">Voir la marketplace <ArrowRight className="h-4 w-4" /></Link></div>
-        {!isSupabaseConfigured ? <SetupNotice /> : loading ? <LoadingState label="Recherche des dernières annonces…" /> : error ? <DataError message={error} resource="annonces" /> : products.length ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{products.map((product) => <ProductCard key={product.id} product={product} />)}</div> : <EmptyState title="Aucune annonce publique pour le moment"><p>Les produits apparaîtront ici après leur publication par les boutiques.</p><Link className="mt-3 font-bold text-faso-forest" to="/signup?role=merchant&next=%2Fmerchant%2Fproducts">Ouvrir une boutique sur FasoFlow <ArrowRight className="inline h-4 w-4" /></Link></EmptyState>}
+        {!isSupabaseConfigured ? <SetupNotice /> : loading ? <LoadingState label="Recherche des dernières annonces…" /> : error ? <DataError message={error} resource="annonces" onRetry={() => setReloadKey((key) => key + 1)} /> : products.length ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{products.map((product) => <ProductCard key={product.id} product={product} />)}</div> : <EmptyState title="Aucune annonce publique pour le moment"><p>Les produits apparaîtront ici après leur publication par les boutiques.</p><Link className="mt-3 font-bold text-faso-forest" to="/signup?role=merchant&next=%2Fmerchant%2Fproducts">Ouvrir une boutique sur FasoFlow <ArrowRight className="inline h-4 w-4" /></Link></EmptyState>}
       </div>
     </section>
 
@@ -86,8 +87,8 @@ export function HomePage() {
   </>;
 }
 
-function DataError({ message, resource }: { message: string; resource: string }) {
-  return <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><p className="font-bold">Impossible de charger {resource}.</p><p className="mt-1">La connexion aux données a échoué : {message || 'erreur inattendue'}.</p><p className="mt-2">Vérifiez votre connexion et réessayez dans quelques instants. Ce message ne signifie pas qu’il n’y a aucune fiche publiée.</p></div>;
+function DataError({ message, resource, onRetry }: { message: string; resource: string; onRetry?: () => void }) {
+  return <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><p className="font-bold">Impossible de charger {resource}.</p><p className="mt-1">La connexion aux données a échoué : {message || 'erreur inattendue'}.</p><p className="mt-2">Vérifiez votre connexion et réessayez dans quelques instants. Ce message ne signifie pas qu’il n’y a aucune fiche publiée.</p>{onRetry && <button type="button" onClick={onRetry} className="mt-3 min-h-11 rounded-full bg-white px-4 py-2 font-bold text-red-900 ring-1 ring-red-200 hover:bg-red-100">Réessayer</button>}</div>;
 }
 
 function ProductResults({ products, loading, error = '', demo = false }: { products: Product[]; loading: boolean; error?: string; demo?: boolean }) {
@@ -106,6 +107,7 @@ export function MarketplacePage() {
   const minPriceFilter = params.get('min_price') ?? '';
   const maxPriceFilter = params.get('max_price') ?? '';
   const conditionFilter = params.get('condition') ?? '';
+  const sortFilter = ['price_low', 'price_high'].includes(params.get('sort') ?? '') ? params.get('sort')! : 'recent';
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [shops, setShops] = useState<Shop[]>([]);
@@ -116,10 +118,12 @@ export function MarketplacePage() {
   const [minPrice, setMinPrice] = useState(minPriceFilter);
   const [maxPrice, setMaxPrice] = useState(maxPriceFilter);
   const [condition, setCondition] = useState(conditionFilter);
+  const [sort, setSort] = useState(sortFilter);
   const [loading, setLoading] = useState(isSupabaseConfigured);
   const [error, setError] = useState('');
   const [modeFilterMissing, setModeFilterMissing] = useState(false);
-  useEffect(() => { setSearch(q); setCategorySelection(categorySlug); setShopSelection(shopId); setCity(cityFilter); setMinPrice(minPriceFilter); setMaxPrice(maxPriceFilter); setCondition(conditionFilter); }, [q, categorySlug, shopId, cityFilter, minPriceFilter, maxPriceFilter, conditionFilter]);
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => { setSearch(q); setCategorySelection(categorySlug); setShopSelection(shopId); setCity(cityFilter); setMinPrice(minPriceFilter); setMaxPrice(maxPriceFilter); setCondition(conditionFilter); setSort(sortFilter); }, [q, categorySlug, shopId, cityFilter, minPriceFilter, maxPriceFilter, conditionFilter, sortFilter]);
   useEffect(() => {
     if (!supabase) { setLoading(false); return; }
     let live = true;
@@ -127,7 +131,7 @@ export function MarketplacePage() {
     setError('');
     setModeFilterMissing(false);
     const validCondition = ['new', 'used', 'refurbished'].includes(conditionFilter) ? conditionFilter : '';
-    let request = supabase.from('products').select(catalogProductsSelect(Boolean(categorySlug))).eq('status', 'active').eq('shops.status', 'active').order('created_at', { ascending: false }).limit(48);
+    let request = supabase.from('products').select(catalogProductsSelect(Boolean(categorySlug))).eq('status', 'active').eq('shops.status', 'active');
     if (q) request = request.ilike('name', `%${q}%`);
     if (categorySlug) request = request.eq('categories.slug', categorySlug);
     if (shopId) request = request.eq('shop_id', shopId);
@@ -135,6 +139,8 @@ export function MarketplacePage() {
     if (/^\d+$/.test(minPriceFilter)) request = request.gte('price_xof', Number(minPriceFilter));
     if (/^\d+$/.test(maxPriceFilter)) request = request.lte('price_xof', Number(maxPriceFilter));
     if (validCondition) request = request.eq('condition', validCondition);
+    request = sortFilter === 'price_low' ? request.order('price_xof', { ascending: true }) : sortFilter === 'price_high' ? request.order('price_xof', { ascending: false }) : request.order('created_at', { ascending: false });
+    request = request.limit(48);
     void Promise.all([
       request,
       supabase.from('categories').select('*').eq('is_active', true).order('sort_order', { ascending: true }).order('name'),
@@ -151,7 +157,7 @@ export function MarketplacePage() {
       setLoading(false);
     }, (reason: unknown) => { if (live) { setError(reason instanceof Error ? reason.message : 'Vérifiez votre connexion puis réessayez.'); setLoading(false); } });
     return () => { live = false; };
-  }, [q, categorySlug, shopId, cityFilter, minPriceFilter, maxPriceFilter, conditionFilter]);
+  }, [q, categorySlug, shopId, cityFilter, minPriceFilter, maxPriceFilter, conditionFilter, sortFilter, reloadKey]);
   function submitSearch(event: FormEvent) {
     event.preventDefault();
     const min = minPrice.trim() ? Number(minPrice) : null;
@@ -166,10 +172,13 @@ export function MarketplacePage() {
     if (min !== null) next.set('min_price', String(min));
     if (max !== null) next.set('max_price', String(max));
     if (['new', 'used', 'refurbished'].includes(condition)) next.set('condition', condition);
+    if (['price_low', 'price_high'].includes(sort)) next.set('sort', sort);
     setParams(next);
   }
+  const hasFilters = Boolean(q || categorySlug || shopId || cityFilter || minPriceFilter || maxPriceFilter || conditionFilter || sortFilter !== 'recent');
+  function clearFilters() { setSearch(''); setCategorySelection(''); setShopSelection(''); setCity(''); setMinPrice(''); setMaxPrice(''); setCondition(''); setSort('recent'); setParams({}); }
   return <section className="page-wrap py-12 sm:py-16"><div className="max-w-2xl"><p className="eyebrow">Le marché local</p><h1 className="section-title mt-2">{q ? `Résultats pour « ${q} »` : 'Trouver votre prochaine belle découverte'}</h1><p className="mt-3 text-faso-muted">Parcourez les annonces publiées par les boutiques.</p></div>
-    <div className="mt-8 space-y-5">{!isSupabaseConfigured && <SetupNotice />}{isSupabaseConfigured && <form className="grid gap-3 rounded-3xl border border-faso-line bg-white p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-3" role="search" onSubmit={submitSearch}><label className="text-sm font-semibold text-faso-ink sm:col-span-2 lg:col-span-3" htmlFor="marketplace-search">Rechercher un produit<input id="marketplace-search" className="field mt-1 min-w-0" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nom du produit…" /></label><label className="text-sm font-semibold text-faso-ink">Catégorie<select className="field mt-1" value={categorySelection} onChange={(event) => setCategorySelection(event.target.value)}><option value="">Toutes les catégories</option>{categories.map((category) => <option key={category.id} value={category.slug}>{category.name}</option>)}</select></label><label className="text-sm font-semibold text-faso-ink">Boutique<select className="field mt-1" value={shopSelection} onChange={(event) => setShopSelection(event.target.value)}><option value="">Toutes les boutiques actives</option>{shops.map((shop) => <option key={shop.id} value={shop.id}>{shop.name}{shop.city ? ` · ${shop.city}` : ''}</option>)}</select></label><label className="text-sm font-semibold text-faso-ink">Ville<input className="field mt-1" value={city} onChange={(event) => setCity(event.target.value)} placeholder="Ex. Ouagadougou" /></label><label className="text-sm font-semibold text-faso-ink">Prix minimum (FCFA)<input className="field mt-1" type="number" min="0" step="1" value={minPrice} onChange={(event) => setMinPrice(event.target.value)} /></label><label className="text-sm font-semibold text-faso-ink">Prix maximum (FCFA)<input className="field mt-1" type="number" min="0" step="1" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /></label><label className="text-sm font-semibold text-faso-ink">État du produit<select className="field mt-1" value={condition} onChange={(event) => setCondition(event.target.value)}><option value="">Tous les états</option><option value="new">Neuf</option><option value="used">Occasion</option><option value="refurbished">Reconditionné</option></select></label><div className="flex flex-wrap items-end gap-2"><button className="btn-primary w-full sm:w-auto" type="submit">Appliquer les filtres</button>{(q || categorySlug || shopId || cityFilter || minPriceFilter || maxPriceFilter || conditionFilter) && <button type="button" onClick={() => { setSearch(''); setParams({}); }} className="min-h-11 rounded-full px-3 text-sm font-bold text-faso-forest underline underline-offset-4">Effacer</button>}</div></form>}{isSupabaseConfigured && (error ? <DataError message={error} resource="le catalogue et les filtres de la marketplace" /> : modeFilterMissing ? <p role="status" className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">Le filtre par état nécessite la migration locale 015. Les résultats ne sont pas présentés comme filtrés tant que ce champ manque.</p> : <ProductResults products={products} loading={loading} />)}</div>
+    <div className="mt-8 space-y-5">{!isSupabaseConfigured && <SetupNotice />}{isSupabaseConfigured && <form className="grid gap-3 rounded-3xl border border-faso-line bg-white p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-3" role="search" onSubmit={submitSearch}><label className="text-sm font-semibold text-faso-ink sm:col-span-2 lg:col-span-3" htmlFor="marketplace-search">Rechercher un produit<input id="marketplace-search" className="field mt-1 min-w-0" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nom du produit…" /></label><label className="text-sm font-semibold text-faso-ink">Catégorie<select className="field mt-1" value={categorySelection} onChange={(event) => setCategorySelection(event.target.value)}><option value="">Toutes les catégories</option>{categories.map((category) => <option key={category.id} value={category.slug}>{category.name}</option>)}</select></label><label className="text-sm font-semibold text-faso-ink">Boutique<select className="field mt-1" value={shopSelection} onChange={(event) => setShopSelection(event.target.value)}><option value="">Toutes les boutiques actives</option>{shops.map((shop) => <option key={shop.id} value={shop.id}>{shop.name}{shop.city ? ` · ${shop.city}` : ''}</option>)}</select></label><label className="text-sm font-semibold text-faso-ink">Ville<input className="field mt-1" value={city} onChange={(event) => setCity(event.target.value)} placeholder="Ex. Ouagadougou" /></label><label className="text-sm font-semibold text-faso-ink">Prix minimum (FCFA)<input className="field mt-1" type="number" min="0" step="1" value={minPrice} onChange={(event) => setMinPrice(event.target.value)} /></label><label className="text-sm font-semibold text-faso-ink">Prix maximum (FCFA)<input className="field mt-1" type="number" min="0" step="1" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /></label><label className="text-sm font-semibold text-faso-ink">État du produit<select className="field mt-1" value={condition} onChange={(event) => setCondition(event.target.value)}><option value="">Tous les états</option><option value="new">Neuf</option><option value="used">Occasion</option><option value="refurbished">Reconditionné</option></select></label><label className="text-sm font-semibold text-faso-ink">Trier par<select className="field mt-1" value={sort} onChange={(event) => setSort(event.target.value)}><option value="recent">Plus récents</option><option value="price_low">Prix croissant</option><option value="price_high">Prix décroissant</option></select></label><div className="flex flex-wrap items-end gap-2"><button className="btn-primary w-full sm:w-auto" type="submit">Appliquer les filtres</button>{hasFilters && <button type="button" onClick={clearFilters} className="min-h-11 rounded-full px-3 text-sm font-bold text-faso-forest underline underline-offset-4">Effacer tous les filtres</button>}</div></form>}{isSupabaseConfigured && (error ? <DataError message={error} resource="le catalogue et les filtres de la marketplace" onRetry={() => setReloadKey((key) => key + 1)} /> : modeFilterMissing ? <p role="status" className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">Le filtre par état nécessite la migration locale 015. Les résultats ne sont pas présentés comme filtrés tant que ce champ manque.</p> : <><div aria-live="polite" className="flex min-h-6 items-center justify-between gap-3 text-sm text-faso-muted">{loading ? <span>Recherche des annonces…</span> : <span className="font-semibold">{products.length === 48 ? '48+ annonces affichées' : `${products.length} annonce${products.length === 1 ? '' : 's'}`}</span>}{hasFilters && !loading && <span className="hidden text-xs sm:inline">Filtres conservés dans l’adresse de la page</span>}</div><ProductResults products={products} loading={loading} /></>)}</div>
   </section>;
 }
 

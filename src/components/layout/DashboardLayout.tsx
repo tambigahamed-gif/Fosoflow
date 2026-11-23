@@ -30,16 +30,26 @@ export function DashboardLayout({ role, children }: { role: AppRole; children?: 
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  async function signOut() { await supabase?.auth.signOut(); toast.success('Vous êtes déconnecté.'); navigate('/'); }
+  async function signOut() {
+    if (!supabase) { toast.error('La déconnexion est indisponible pour le moment.'); return; }
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) { toast.error(`Déconnexion impossible : ${error.message}`); return; }
+      toast.success('Vous êtes déconnecté.');
+      navigate('/');
+    } catch (reason) {
+      toast.error(`Déconnexion impossible : ${reason instanceof Error ? reason.message : 'erreur réseau inattendue'}`);
+    }
+  }
   const nav = navByRole[role];
   const dashboardPath = role === 'service_provider' ? '/provider' : `/${role}`;
   const current = location.pathname.split('/')[2] || 'dashboard';
   return <div className="page-wrap pb-16 pt-8">
-    <div className="mb-6 flex items-center justify-between gap-4"><div><Link to="/" className="inline-flex items-center gap-1 text-xs font-bold text-faso-muted hover:text-faso-forest"><ChevronLeft className="h-4 w-4" /> Retour à la marketplace</Link><h1 className="mt-3 font-display text-2xl font-extrabold">{titles[role]}</h1></div><button className="grid h-10 w-10 place-items-center rounded-xl border border-faso-line bg-white lg:hidden" onClick={() => setOpen(!open)} aria-label={open ? 'Fermer le menu' : 'Ouvrir le menu'}>{open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}</button></div>
+    <div className="mb-6 flex items-center justify-between gap-4"><div><Link to="/" className="inline-flex items-center gap-1 text-xs font-bold text-faso-muted hover:text-faso-forest"><ChevronLeft className="h-4 w-4" /> Retour à la marketplace</Link><h1 className="mt-3 font-display text-2xl font-extrabold">{titles[role]}</h1></div><button type="button" className="grid h-11 w-11 place-items-center rounded-xl border border-faso-line bg-white focus:outline-none focus:ring-4 focus:ring-faso-forest/20 lg:hidden" onClick={() => setOpen(!open)} aria-label={open ? 'Fermer le menu' : 'Ouvrir le menu'} aria-expanded={open} aria-controls="dashboard-navigation">{open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}</button></div>
     <div className="grid gap-6 lg:grid-cols-[245px_minmax(0,1fr)]">
-      <aside className={`${open ? 'block' : 'hidden'} card-surface h-fit p-3 lg:sticky lg:top-28 lg:block`}>
+      <aside id="dashboard-navigation" className={`${open ? 'block' : 'hidden'} card-surface h-fit p-3 lg:sticky lg:top-28 lg:block`}>
         <div className="mb-3 rounded-2xl bg-faso-ivory p-4"><p className="text-xs font-bold uppercase tracking-wide text-faso-muted">Connecté en tant que</p><p className="mt-1 truncate font-display font-extrabold">{profile?.full_name || user?.email || 'Membre FasoFlow'}</p><p className="mt-1 text-xs capitalize text-faso-forest">{role}</p></div>
-        <nav className="grid gap-1">{nav.map(({ label, path, icon: Icon }) => { const active = current === path || (path === 'dashboard' && (current === 'dashboard' || current === '')); return <Link key={path} onClick={() => setOpen(false)} className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${active ? 'bg-faso-forest text-white' : 'text-faso-muted hover:bg-faso-ivory hover:text-faso-ink'}`} to={`${dashboardPath}/${path}`}><Icon className="h-4 w-4" />{label}</Link>; })}</nav>
+        <nav aria-label={`Navigation ${titles[role].toLocaleLowerCase('fr')}`} className="grid gap-1">{nav.map(({ label, path, icon: Icon }) => { const active = current === path || (path === 'dashboard' && (current === 'dashboard' || current === '')); return <Link key={path} onClick={() => setOpen(false)} aria-current={active ? 'page' : undefined} className={`flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition focus:outline-none focus:ring-4 focus:ring-faso-forest/20 ${active ? 'bg-faso-forest text-white' : 'text-faso-muted hover:bg-faso-ivory hover:text-faso-ink'}`} to={`${dashboardPath}/${path}`}><Icon className="h-4 w-4" aria-hidden="true" />{label}</Link>; })}</nav>
         <button onClick={() => void signOut()} className="mt-4 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-faso-muted hover:bg-red-50 hover:text-red-700"><LogOut className="h-4 w-4" /> Déconnexion</button>
       </aside>
       <section className="min-w-0">{children ?? <Outlet />}</section>

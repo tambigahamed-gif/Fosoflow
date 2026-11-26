@@ -21,3 +21,23 @@ Complément — vérifications en lecture seule du parcours prestataire (22-11-2
 7) Les RPC prestataire nommées ci-dessus, leurs signatures attendues et les permissions `authenticated` ont été trouvées. RLS est activé pour les tables de services. Le trigger `handle_new_user` crée le profil de compte générique, mais ne crée pas de ligne `service_provider_profiles`.
 
 Ces constats sont des lectures ponctuelles, ne prouvent pas l’exécution exacte du fichier de migration 015 et ne valident pas un parcours utilisateur avec session réelle. Aucun DML, DDL, stockage d’image, appel d’action RPC avec mutation, migration, déploiement ou push n’a été effectué.
+
+
+Vérification et migrations 016/017 — 2026-11-26
+
+Projet actif : `fasoflow`, project_id/ref `xmjbsurnqvwjitdalruf`, état `ACTIVE_HEALTHY`.
+
+Avant application, `list_migrations` était vide. L’inspection distante a constaté la policy `reviews_customer_insert` dont le prédicat comparait à tort `o.shop_id = o.shop_id`; les colonnes requises étaient présentes. La migration `016_fix_product_review_shop_policy` a été appliquée. Vérification postérieure : le prédicat lie désormais `o.shop_id = reviews.shop_id` et la policy reste limitée à `authenticated`/INSERT.
+
+Les 23 signatures visées par `017_restrict_anonymous_definer_rpc` étaient présentes; chacune accordait explicitement EXECUTE à `anon` et `authenticated`, sans grant `PUBLIC`. La migration `017_restrict_anonymous_definer_rpc` a été appliquée. Vérification postérieure sur les 23 signatures : `anon_execute=false`, `authenticated_execute=true` pour toutes.
+
+Le registre Supabase confirme les versions `20261126131610` / `016_fix_product_review_shop_policy` et `20261126131618` / `017_restrict_anonymous_definer_rpc`. Ces interventions n’ont pas écrit de données métier ou de test, n’ont pas exécuté 015, et ne valident pas les parcours E2E ni toutes les permissions/intégrations de production.
+
+
+Correctif post-vérification navigateur — migration 018 — 2026-11-26
+
+Après 016/017, le contrôle navigateur de `https://fasoflowbf.vercel.app/services` a reproduit `permission denied for function is_service_provider`. L’analyse distante a montré que `is_service_provider(uuid)` est utilisé dans les policies RLS de lecture publique de `service_listings` et `service_provider_profiles`. La fonction SECURITY DEFINER ne retourne qu’un booléen d’appartenance au rôle prestataire; aucun champ de profil n’est retourné.
+
+La migration additive `018_restore_public_service_provider_helper` a rétabli EXECUTE pour `anon` sur cette fonction, en conservant EXECUTE `authenticated`. Après application, le navigateur a rechargé Services : la carte de la prestation « Hamed » était visible et l’erreur de permission avait disparu. L’état ACL final a été vérifié pour les 23 signatures : `anon_execute=false` sur 22 RPC internes et `true` uniquement sur `is_service_provider(uuid)`; `authenticated_execute=true` sur les 23. Le registre liste 016 version `20261126131610`, 017 `20261126131618`, 018 `20261126131931`.
+
+Le fichier 018 a été créé dans le dépôt local; il n’a pas encore été commité/poussé. Cette vérification n’est ni un E2E authentifié ni une validation de toutes les policies/intégrations.

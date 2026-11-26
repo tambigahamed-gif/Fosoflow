@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowUpRight, Check, MessageCircle, Send, X } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -30,6 +30,10 @@ export function ChatPanel() {
   const [messageError, setMessageError] = useState('');
   const [realtimeStatus, setRealtimeStatus] = useState<'idle' | 'connecting' | 'connected' | 'disconnected'>('idle');
   const [realtimeAttempt, setRealtimeAttempt] = useState(0);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const [olderMessageError, setOlderMessageError] = useState('');
+  const messageRequestId = useRef(0);
 
   const loadConversations = useCallback(async () => {
     if (!supabase || !user) return;
@@ -61,23 +65,31 @@ export function ChatPanel() {
 
   const loadMessages = useCallback(async (conversationId: string) => {
     if (!supabase || !conversationId) return;
+    const requestId = ++messageRequestId.current;
     const conversation = conversations.find((item) => item.conversation_id === conversationId)?.conversations;
     const isServiceConversation = conversation?.title?.startsWith('Devis service #') ?? false;
     try {
       const [messageResult, offerResult] = await Promise.all([
-        supabase.from('messages').select('id,conversation_id,sender_id,body,created_at').eq('conversation_id', conversationId).order('created_at', { ascending: true }).limit(200),
+        supabase.from('messages').select('id,conversation_id,sender_id,body,created_at').eq('conversation_id', conversationId).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(200),
         isServiceConversation
           ? Promise.resolve({ data: [] as Offer[], error: null })
-          : supabase.from('price_offers').select('id,conversation_id,offered_by,amount_xof,note,status,created_at').eq('conversation_id', conversationId).order('created_at', { ascending: false }).limit(20),
+        : supabase.from('price_offers').select('id,conversation_id,offered_by,amount_xof,note,status,created_at').eq('conversation_id', conversationId).order('created_at', { ascending: false }).limit(20),
       ]);
+      if (requestId !== messageRequestId.current) return;
       const errors: string[] = [];
       if (messageResult.error) errors.push(`Messages : ${messageResult.error.message}`);
       if (offerResult.error) errors.push(`Propositions de prix : ${offerResult.error.message}`);
       setMessageError(errors.join(' · '));
-      setMessages(messageResult.error ? [] : (messageResult.data as Message[] | null) ?? []);
+      const latestMessages = messageResult.error ? [] : ((messageResult.data as Message[] | null) ?? []).reverse();
+      setMessages((current) => {
+        const merged = new Map([...current, ...latestMessages].map((message) => [message.id, message]));
+        return [...merged.values()].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+      });
+      if (!messageResult.error && (messageResult.data?.length ?? 0) === 200) setHasOlderMessages(true);
       setOffers(offerResult.error ? [] : (offerResult.data as Offer[] | null) ?? []);
       if (errors.length) toast.error(`Chargement de la discussion incomplet : ${errors.join(' · ')}`);
     } catch (reason) {
+      if (requestId !== messageRequestId.current) return;
       const message = reason instanceof Error ? reason.message : 'erreur réseau inattendue';
       setMessageError(message);
       setMessages([]);
@@ -91,6 +103,11 @@ export function ChatPanel() {
     if (!selected) { setRealtimeStatus('idle'); return; }
     if (!supabase) { setRealtimeStatus('disconnected'); return; }
     setRealtimeStatus('connecting');
+    setMessages([]);
+    setOffers([]);
+    setHasOlderMessages(false);
+    setOlderMessageError('');
+    setMessageError('');
     void loadMessages(selected);
     const channel = supabase.channel(`chat-${selected}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `conversation_id=eq.${selected}` }, () => void loadMessages(selected))
@@ -99,15 +116,46 @@ export function ChatPanel() {
         if (status === 'SUBSCRIBED') setRealtimeStatus('connected');
         else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') setRealtimeStatus('disconnected');
       });
-    return () => { void supabase?.removeChannel(channel); };
+    return () => { messageRequestId.current += 1; void supabase?.removeChannel(channel); };
   }, [selected, loadMessages, realtimeAttempt]);
+
+  async function loadOlderMessages() {
+    if (!supabase || !selected || !hasOlderMessages || loadingOlderMessages || !messages.length) return;
+    const conversationId = selected;
+    const requestId = messageRequestId.current;
+    const oldest = messages[0];
+    setLoadingOlderMessages(true);
+    setOlderMessageError('');
+    try {
+      const { data, error } = await supabase.from('messages')
+        .select('id,conversation_id,sender_id,body,created_at')
+        .eq('conversation_id', conversationId)
+        .or(`created_at.lt.${oldest.created_at},and(created_at.eq.${oldest.created_at},id.lt.${oldest.id})`)
+        .order('created_at', { ascending: false }).order('id', { ascending: false }).limit(200);
+      if (error) throw error;
+      if (requestId !== messageRequestId.current) return;
+      const older = ((data as Message[] | null) ?? []).reverse();
+      setMessages((current) => {
+        const merged = new Map([...older, ...current].map((message) => [message.id, message]));
+        return [...merged.values()].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+      });
+      setHasOlderMessages(older.length === 200);
+    } catch (reason) {
+      if (requestId === messageRequestId.current) setOlderMessageError(reason instanceof Error ? reason.message : 'erreur réseau inattendue');
+    } finally {
+      setLoadingOlderMessages(false);
+    }
+  }
 
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
-    if (!supabase || !user || !selected || !body.trim()) return;
+    const trimmedBody = body.trim();
+    if (!supabase || !user || !selected) return;
+    if (!trimmedBody) { toast.error('Écrivez un message avant de l’envoyer.'); return; }
+    if (trimmedBody.length > 3000) { toast.error('Un message ne peut pas dépasser 3 000 caractères.'); return; }
     setSending(true);
     try {
-      const { error } = await supabase.from('messages').insert({ conversation_id: selected, sender_id: user.id, body: body.trim() });
+      const { error } = await supabase.from('messages').insert({ conversation_id: selected, sender_id: user.id, body: trimmedBody });
       if (error) toast.error(`Message non envoyé : ${error.message}`);
       else { setBody(''); await loadMessages(selected); }
     } catch (reason) {
@@ -156,10 +204,11 @@ export function ChatPanel() {
           {selected ? <>
             <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
               {messageError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">Discussion chargée partiellement : {messageError} <button className="font-bold underline" onClick={() => void loadMessages(selected)}>Réessayer</button></p>}
+              {hasOlderMessages && <div className="text-center"><button type="button" className="btn-secondary !min-h-9 !px-3 !py-2" disabled={loadingOlderMessages} onClick={() => void loadOlderMessages()}>{loadingOlderMessages ? 'Chargement…' : 'Charger les messages précédents'}</button>{olderMessageError && <p role="alert" className="mt-2 text-sm text-red-800">Messages précédents indisponibles : {olderMessageError}</p>}</div>}
               {messages.length ? messages.map((message) => <div key={message.id} className={`flex ${message.sender_id === user?.id ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm ${message.sender_id === user?.id ? 'rounded-br-md bg-faso-forest text-white' : 'rounded-bl-md bg-faso-ivory text-faso-ink'}`}><p className="whitespace-pre-wrap">{message.body}</p><p className={`mt-2 text-[10px] ${message.sender_id === user?.id ? 'text-white/60' : 'text-faso-muted'}`}>{formatDate(message.created_at, { hour: '2-digit', minute: '2-digit' })}</p></div></div>) : !messageError && <p className="py-8 text-center text-sm text-faso-muted">Démarrez la conversation.</p>}
               {offers.map((offer) => <div key={offer.id} className="rounded-2xl border border-faso-saffron/40 bg-[#FFF8E8] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wide text-[#8A6200]">Proposition de prix</p><p className="mt-1 font-display text-xl font-extrabold">{formatXof(offer.amount_xof)}</p><p className="mt-1 text-xs text-faso-muted">{offer.status === 'pending' ? 'En attente de réponse' : offer.status === 'accepted' ? 'Acceptée — paiement non confirmé' : 'Refusée'}</p></div>{offer.status === 'pending' && offer.offered_by !== user?.id && <div className="flex gap-2"><button className="btn-secondary !min-h-9 !px-3 !py-2" onClick={() => void respond(offer.id, false)}><X className="h-4 w-4" />Refuser</button><button className="btn-primary !min-h-9 !px-3 !py-2" onClick={() => void respond(offer.id, true)}><Check className="h-4 w-4" />Accepter</button></div>}</div></div>)}
             </div>
-            <div className="border-t border-faso-line p-3 sm:p-4"><form onSubmit={sendMessage} className="flex items-end gap-2"><textarea value={body} onChange={(e) => setBody(e.target.value)} className="field min-h-11 resize-y" rows={1} maxLength={3000} placeholder="Écrire un message…" aria-label="Message" /><button className="btn-primary !h-11 !w-11 !min-h-11 !p-0" disabled={sending || !body.trim()} aria-label="Envoyer le message"><Send className="h-4 w-4" /></button></form>{!conversations.find((item) => item.conversation_id === selected)?.conversations?.title?.startsWith('Devis service #') && <div className="mt-3 flex gap-2"><input className="field !max-w-40 !py-2" type="number" min="1" step="1" value={offerAmount} onChange={(e) => setOfferAmount(e.target.value)} placeholder="Prix en FCFA" aria-label="Prix proposé" /><button className="btn-secondary !min-h-9 !px-3 !py-2 text-xs" onClick={() => void sendOffer()}><ArrowUpRight className="h-4 w-4" />Proposer un prix</button></div>}{conversations.find((item) => item.conversation_id === selected)?.conversations?.title?.startsWith('Devis service #') && <p className="mt-2 text-xs text-faso-muted">Pour ce service, répondez au devis depuis les demandes reçues ou échangez les conditions par message.</p>}</div>
+            <div className="border-t border-faso-line p-3 sm:p-4"><form onSubmit={sendMessage} className="flex items-end gap-2"><textarea value={body} onChange={(e) => setBody(e.target.value)} className="field min-h-11 resize-y" rows={1} maxLength={3000} placeholder="Écrire un message…" aria-label="Message" /><button className="btn-primary !h-11 !w-11 !min-h-11 !p-0" disabled={sending || !body.trim() || body.trim().length > 3000} aria-label="Envoyer le message"><Send className="h-4 w-4" /></button></form>{!conversations.find((item) => item.conversation_id === selected)?.conversations?.title?.startsWith('Devis service #') && <div className="mt-3 flex gap-2"><input className="field !max-w-40 !py-2" type="number" min="1" step="1" value={offerAmount} onChange={(e) => setOfferAmount(e.target.value)} placeholder="Prix en FCFA" aria-label="Prix proposé" /><button className="btn-secondary !min-h-9 !px-3 !py-2 text-xs" onClick={() => void sendOffer()}><ArrowUpRight className="h-4 w-4" />Proposer un prix</button></div>}{conversations.find((item) => item.conversation_id === selected)?.conversations?.title?.startsWith('Devis service #') && <p className="mt-2 text-xs text-faso-muted">Pour ce service, répondez au devis depuis les demandes reçues ou échangez les conditions par message.</p>}</div>
           </> : <div className="grid flex-1 place-items-center p-6"><EmptyState title="Choisissez une conversation"><MessageCircle className="h-5 w-5" /></EmptyState></div>}
         </div>
       </div>

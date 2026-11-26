@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { catalogProductsSelect, maximumOrderQuantity, minimumOrderQuantity, orderRuleError, productModeLabel } from '../src/features/marketplace/product-rules';
-import { isMissingServicesMigration, serviceImageLimitExceeded, servicePriceLabel, serviceRequestStatusLabels } from '../src/features/services/service-utils';
+import { isMissingServicesMigration, serviceImageLimitExceeded, serviceListingContentChanged, servicePriceLabel, serviceRequestStatusLabels } from '../src/features/services/service-utils';
 import type { Product } from '../src/types';
 
 const product = (sale_mode: Product['sale_mode'], stock_quantity = 5, minimum_order_quantity = 1): Product => ({
@@ -49,5 +49,16 @@ describe('découverte et devis de services', () => {
     expect(serviceImageLimitExceeded(6, 2)).toBe(false);
     expect(serviceImageLimitExceeded(6, 3)).toBe(true);
     expect(serviceImageLimitExceeded(-1, 1)).toBe(true);
+  });
+
+  it('ne considère pas le statut seul comme une modification du contenu', () => {
+    const listing = {
+      category_id: 'category-1', title: 'Réparation', description: 'Service fiable', city: 'Ouagadougou',
+      service_area: ['Ouagadougou', 'Koudougou'], price_min_xof: 5000, price_max_xof: null,
+      price_unit: 'par intervention', image_urls: ['https://example.test/photo.jpg'],
+    };
+    expect(serviceListingContentChanged(listing, { ...listing })).toBe(false);
+    expect(serviceListingContentChanged(listing, { ...listing, title: 'Réparation mobile' })).toBe(true);
+    expect(serviceListingContentChanged(listing, { ...listing, image_urls: [] })).toBe(true);
   });
 });

@@ -14,7 +14,7 @@ export function SetupNotice({ compact = false }: { compact?: boolean }) {
 }
 
 export function LoadingState({ label = 'Chargement…' }: { label?: string }) {
-  return <div className="flex min-h-48 items-center justify-center gap-3 text-sm text-faso-muted"><LoaderCircle className="h-5 w-5 animate-spin text-faso-forest" />{label}</div>;
+  return <div role="status" aria-live="polite" aria-busy="true" className="flex min-h-48 items-center justify-center gap-3 text-sm text-faso-muted"><LoaderCircle className="h-5 w-5 animate-spin text-faso-forest" aria-hidden="true" />{label}</div>;
 }
 
 export function EmptyState({ title, children, icon }: { title: string; children?: ReactNode; icon?: ReactNode }) {

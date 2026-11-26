@@ -1,0 +1,23 @@
+Vérification Supabase — FasoFlow — 2026-11-22
+Source : appels en lecture seule au MCP Supabase, projet `fasoflow`, project_id/ref `xmjbsurnqvwjitdalruf`, région eu-west-1, status ACTIVE_HEALTHY.
+
+1) `supabase/list_migrations` → {"migrations": []}. L’historique migrations enregistré via ce mécanisme est vide; cela ne prouve pas qu’aucun SQL n’a été appliqué manuellement via SQL Editor.
+
+2) `supabase/list_tables` public → présence avec RLS activée de `service_categories`, `service_provider_profiles`, `service_listings`, `service_requests`, `service_reviews`; présence également de tables de migration 013/014 (`product_costs`, `order_item_costs`, `business_expenses`, `stock_movements`, `contact_rate_limits`).
+
+3) SELECT limité sur information_schema.columns → présence des colonnes typiques de 015: `conversations.service_request_id`; `products.condition`, `sale_mode`, `minimum_order_quantity`, `lead_time_days`; colonnes de `service_provider_profiles`, `service_listings`, `service_requests` attendues.
+
+4) SELECT limité sur information_schema.routines → fonctions présentes: `admin_set_service_provider_status`, `complete_service_request`, `create_service_request`, `get_or_create_service_conversation`, `respond_service_request`.
+
+5) SELECT limité sur pg_constraint et storage.buckets → `profiles_role_check` contient `service_provider`; bucket Storage `service-images` présent.
+
+Conclusion prudente : la structure principale de migration 015 paraît actuellement installée/appliquée au projet (tables, colonnes, RPC, rôle et bucket présents), vraisemblablement via SQL Editor ou méthode non reflétée par list_migrations. L’historique de migrations étant vide, impossible d’affirmer que le fichier `015` exact a été exécuté tel quel ou de vérifier son intégrité complète à partir de ces seuls contrôles. Aucun DDL/DML, modification, migration ou déploiement n’a été fait lors de ces vérifications.
+
+
+Complément — vérifications en lecture seule du parcours prestataire (22-11-2026)
+
+6) Comptages limités : 2 comptes portent le rôle `service_provider`; 0 ligne dans `service_provider_profiles`, 0 dans `service_listings` et 0 dans `service_requests`. Aucun identifiant, courriel ou donnée personnelle n’est conservé dans cette note.
+
+7) Les RPC prestataire nommées ci-dessus, leurs signatures attendues et les permissions `authenticated` ont été trouvées. RLS est activé pour les tables de services. Le trigger `handle_new_user` crée le profil de compte générique, mais ne crée pas de ligne `service_provider_profiles`.
+
+Ces constats sont des lectures ponctuelles, ne prouvent pas l’exécution exacte du fichier de migration 015 et ne valident pas un parcours utilisateur avec session réelle. Aucun DML, DDL, stockage d’image, appel d’action RPC avec mutation, migration, déploiement ou push n’a été effectué.

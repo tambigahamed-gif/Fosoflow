@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { PackagePlus, Pencil, Plus, Store, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -21,6 +21,8 @@ export function MerchantProductsPage() {
   const [products, setProducts] = useState<MerchantProduct[]>([]);
   const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(isSupabaseConfigured);
+  const [loadError, setLoadError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
   const [showForm, setShowForm] = useState(false);
   const [showShopForm, setShowShopForm] = useState(false);
   const [editing, setEditing] = useState<MerchantProduct | null>(null);
@@ -33,10 +35,18 @@ export function MerchantProductsPage() {
   const [minimumQuantity, setMinimumQuantity] = useState(1);
   const [leadTimeDays, setLeadTimeDays] = useState('');
   const [businessAccess, setBusinessAccess] = useState<'loading' | 'allowed' | 'locked' | 'error'>('loading');
+  const [statusFilter, setStatusFilter] = useState<'all' | Product['status']>('all');
+  const visibleProducts = useMemo(() => statusFilter === 'all' ? products : products.filter((product) => product.status === statusFilter), [products, statusFilter]);
 
   useEffect(() => {
-    if (!supabase || !user) return;
+    if (!supabase || !user) {
+      setLoading(false);
+      setLoadError('Session commerçant indisponible.');
+      return;
+    }
     let live = true;
+    setLoading(true);
+    setLoadError('');
     const load = async () => {
       let hasBusinessAccess = false;
       let accessError = false;
@@ -47,18 +57,22 @@ export function MerchantProductsPage() {
         supabase!.from('shops').select('*').eq('owner_id', user!.id).maybeSingle(),
         supabase!.from('categories').select('id,name').eq('is_active', true).order('name'),
       ]);
+      if (shopResult.error) throw new Error(`Boutique impossible à charger : ${shopResult.error.message}`);
+      if (categoryResult.error) throw new Error(`Catégories impossibles à charger : ${categoryResult.error.message}`);
       if (!live) return;
-      if (shopResult.error) toast.error(`Boutique impossible à charger : ${shopResult.error.message}`);
       setShop(shopResult.data as Shop | null);
       setCategories((categoryResult.data as { id: string; name: string }[] | null) ?? []);
       const modesCheck = await supabase!.from('products').select('condition,sale_mode,minimum_order_quantity,lead_time_days').limit(1);
       if (!live) return;
       setProductModesAvailable(!modesCheck.error);
       setProductModesMissing(Boolean(modesCheck.error && isMissingProductModesMigration(modesCheck.error.message)));
+      if (modesCheck.error && !isMissingProductModesMigration(modesCheck.error.message)) {
+        toast.error(`Options de vente avancées indisponibles : ${modesCheck.error.message}`);
+      }
       if (shopResult.data) {
         const result = await supabase!.from('products').select('*').eq('shop_id', shopResult.data.id).order('created_at', { ascending: false });
+        if (result.error) throw new Error(`Produits impossibles à charger : ${result.error.message}`);
         if (!live) return;
-        if (result.error) toast.error(`Produits impossibles à charger : ${result.error.message}`);
         const baseProducts = (result.data as Product[] | null) ?? [];
         let costsByProduct = new Map<string, number | null>();
         if (hasBusinessAccess && baseProducts.length) {
@@ -73,11 +87,17 @@ export function MerchantProductsPage() {
         }
         setProducts(baseProducts.map((product) => ({ ...product, purchase_cost_xof: hasBusinessAccess ? costsByProduct.get(product.id) ?? null : null })));
       }
-      if (live) setLoading(false);
     };
-    void load().catch(() => { if (live) { setLoading(false); toast.error('Impossible de charger la boutique. Réessayez plus tard.'); } });
+    void load().catch((reason: unknown) => {
+      if (!live) return;
+      const message = reason instanceof Error ? reason.message : 'erreur réseau inattendue';
+      setLoadError(message);
+      setShop(null);
+      setProducts([]);
+      toast.error(message);
+    }).finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
-  }, [user]);
+  }, [user, reloadKey]);
 
   if (!isSupabaseConfigured) return <div><h2 className="font-display text-2xl font-extrabold">Mes produits</h2><div className="mt-5"><SetupNotice /></div></div>;
 
@@ -87,10 +107,16 @@ export function MerchantProductsPage() {
     const form = new FormData(event.currentTarget);
     const name = String(form.get('name')).trim();
     setBusy(true);
-    const { data, error } = await supabase.from('shops').insert({ owner_id: user.id, name, slug: String(form.get('slug') || name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''), description: String(form.get('description') || ''), city: String(form.get('city') || '') }).select('*').single();
-    setBusy(false);
-    if (error) toast.error(error.message);
-    else { setShop(data as Shop); toast.success('Boutique créée. Elle apparaîtra après validation.'); }
+    try {
+      const { data, error } = await supabase.from('shops').insert({ owner_id: user.id, name, slug: String(form.get('slug') || name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''), description: String(form.get('description') || ''), city: String(form.get('city') || '') }).select('*').single();
+      if (error) throw error;
+      setShop(data as Shop);
+      toast.success('Boutique créée. Elle apparaîtra après validation.');
+    } catch (reason) {
+      toast.error(`Boutique non créée : ${reason instanceof Error ? reason.message : 'erreur réseau inattendue'}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function updateShop(event: FormEvent<HTMLFormElement>) {
@@ -160,14 +186,20 @@ export function MerchantProductsPage() {
       advancedFields = { condition: rawCondition ? rawCondition as Product['condition'] : null, sale_mode: rawMode ? rawMode as Product['sale_mode'] : null, minimum_order_quantity: rawMode ? rawMode === 'retail' ? 1 : parsedMinimum ?? (rawMode === 'wholesale' ? 2 : 1) : null, lead_time_days: parsedLeadTime };
     }
     const image = form.get('image');
+    if (image instanceof File && image.size && (!['image/jpeg', 'image/png', 'image/webp'].includes(image.type) || image.size > 5 * 1024 * 1024)) {
+      toast.error('Choisissez une image JPG, PNG ou WebP de 5 Mo maximum.');
+      return;
+    }
     setBusy(true);
     let imageUrl: string | null = editing?.image_url ?? null;
+    let uploadedPath: string | null = null;
+    try {
     if (image instanceof File && image.size) {
-      if (!image.type.startsWith('image/') || image.size > 5 * 1024 * 1024) { setBusy(false); toast.error('Choisissez une image de 5 Mo maximum.'); return; }
       const ext = image.name.split('.').pop()?.toLowerCase() || 'jpg';
       const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
       const upload = await supabase.storage.from('product-images').upload(path, image, { upsert: false, contentType: image.type });
-      if (upload.error) { setBusy(false); toast.error(`Image non envoyée : ${upload.error.message}`); return; }
+      if (upload.error) throw new Error(`Image non envoyée : ${upload.error.message}`);
+      uploadedPath = path;
       imageUrl = supabase.storage.from('product-images').getPublicUrl(path).data.publicUrl;
     }
     const payload = {
@@ -182,24 +214,24 @@ export function MerchantProductsPage() {
     };
     const productPayload = productModesAvailable && advancedFields ? { ...payload, ...advancedFields } : payload;
     const result = editing
-      ? await supabase.from('products').update(productPayload).eq('id', editing.id).select('*').single()
+      ? await supabase.from('products').update(productPayload).eq('id', editing.id).eq('shop_id', shop.id).select('*').single()
       : await supabase.from('products').insert(productPayload).select('*').single();
-    if (result.error) {
-      setBusy(false);
-      toast.error(`Enregistrement impossible : ${result.error.message}`);
-      return;
-    }
+    if (result.error) throw result.error;
     const savedProduct = result.data as Product;
     let costError: { message: string } | null = null;
     if (businessAccess === 'allowed') {
-      const costResult = await supabase.from('product_costs').upsert({
-        product_id: savedProduct.id,
-        shop_id: shop.id,
-        purchase_cost_xof: purchaseCost,
-        updated_by: user.id,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'product_id' });
-      costError = costResult.error;
+      try {
+        const costResult = await supabase.from('product_costs').upsert({
+          product_id: savedProduct.id,
+          shop_id: shop.id,
+          purchase_cost_xof: purchaseCost,
+          updated_by: user.id,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'product_id' });
+        costError = costResult.error;
+      } catch (reason) {
+        costError = { message: reason instanceof Error ? reason.message : 'erreur réseau inattendue' };
+      }
     }
     setBusy(false);
     const costMissing = Boolean(costError && missingCostTable(costError.message));
@@ -212,13 +244,42 @@ export function MerchantProductsPage() {
     if (businessAccess === 'allowed' && costMissing) toast.error('Produit enregistré. Le coût d’achat n’a pas été conservé : la migration Business 013 est requise.');
     else if (businessAccess === 'allowed' && costError) toast.error(`Produit enregistré, mais coût d’achat non sauvegardé : ${costError.message}`);
     else toast.success(editing ? 'Produit modifié et renvoyé à la modération.' : 'Produit enregistré et envoyé à la modération.');
+    } catch (reason) {
+      if (uploadedPath) await supabase.storage.from('product-images').remove([uploadedPath]).catch(() => undefined);
+      toast.error(`Produit non enregistré : ${reason instanceof Error ? reason.message : 'erreur réseau inattendue'}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function archiveProduct(id: string) {
-    if (!supabase) return;
-    const { error } = await supabase.from('products').update({ status: 'archived' }).eq('id', id);
-    if (error) toast.error(error.message);
-    else { setProducts((prev) => prev.filter((item) => item.id !== id)); toast.success('Produit archivé.'); }
+    if (!supabase || !shop) return;
+    setBusy(true);
+    try {
+      const { data, error } = await supabase.from('products').update({ status: 'archived' }).eq('id', id).eq('shop_id', shop.id).select('id,status').single();
+      if (error) throw error;
+      setProducts((prev) => prev.map((item) => item.id === id ? { ...item, status: data.status as Product['status'] } : item));
+      toast.success('Produit archivé.');
+    } catch (reason) {
+      toast.error(`Produit non archivé : ${reason instanceof Error ? reason.message : 'erreur réseau inattendue'}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resubmitProduct(id: string) {
+    if (!supabase || !shop) return;
+    setBusy(true);
+    try {
+      const { data, error } = await supabase.from('products').update({ status: 'pending_review' }).eq('id', id).eq('shop_id', shop.id).select('id,status').single();
+      if (error) throw error;
+      setProducts((prev) => prev.map((item) => item.id === id ? { ...item, status: data.status as Product['status'] } : item));
+      toast.success('Produit renvoyé à la modération; il ne sera visible qu’après validation.');
+    } catch (reason) {
+      toast.error(`Produit non renvoyé à la modération : ${reason instanceof Error ? reason.message : 'erreur réseau inattendue'}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return <section>
@@ -227,7 +288,8 @@ export function MerchantProductsPage() {
       {shop && <button onClick={() => { const next = !showForm; setEditing(null); setCondition('new'); setSaleMode('retail'); setMinimumQuantity(1); setLeadTimeDays(''); setShowForm(next); }} className="btn-primary"><Plus className="h-4 w-4" />{showForm ? 'Fermer' : 'Ajouter un produit'}</button>}
     </div>
     {loading && <div className="mt-6 h-40 animate-pulse rounded-3xl bg-white" />}
-    {!loading && !shop && <div className="mt-6 rounded-3xl border border-faso-line bg-white p-6"><div className="mb-5 flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-faso-ivory text-faso-forest"><Store /></span><div><h3 className="font-display text-lg font-extrabold">Créez votre boutique</h3><p className="text-sm text-faso-muted">Commencez votre vitrine FasoFlow.</p></div></div><form className="grid gap-4 sm:grid-cols-2" onSubmit={createShop}><label className="label">Nom de boutique<input name="name" className="field" required maxLength={120} /></label><label className="label">Ville<input name="city" className="field" required maxLength={80} placeholder="Ouagadougou" /></label><label className="label sm:col-span-2">Description<textarea name="description" className="field min-h-24" maxLength={1500} /></label><button disabled={busy} className="btn-primary sm:col-span-2">{busy ? 'Création…' : 'Créer ma boutique'}</button></form></div>}
+    {!loading && loadError && <div role="alert" className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><p>Catalogue indisponible : {loadError}</p><button type="button" className="mt-2 min-h-10 font-bold underline" onClick={() => setReloadKey((key) => key + 1)}>Réessayer</button></div>}
+    {!loading && !loadError && !shop && <div className="mt-6 rounded-3xl border border-faso-line bg-white p-6"><div className="mb-5 flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-faso-ivory text-faso-forest"><Store /></span><div><h3 className="font-display text-lg font-extrabold">Créez votre boutique</h3><p className="text-sm text-faso-muted">Commencez votre vitrine FasoFlow.</p></div></div><form className="grid gap-4 sm:grid-cols-2" onSubmit={createShop}><label className="label">Nom de boutique<input name="name" className="field" required maxLength={120} /></label><label className="label">Ville<input name="city" className="field" required maxLength={80} placeholder="Ouagadougou" /></label><label className="label sm:col-span-2">Description<textarea name="description" className="field min-h-24" maxLength={1500} /></label><button disabled={busy} className="btn-primary sm:col-span-2">{busy ? 'Création…' : 'Créer ma boutique'}</button></form></div>}
     {shop && <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-faso-line bg-white p-4 text-sm"><div><span className="font-bold">{shop.name}</span><span className="mx-2 text-faso-muted">·</span><span className="capitalize text-faso-muted">Statut : {shop.status.replaceAll('_', ' ')}</span><Link className="ml-2 font-bold text-faso-forest underline underline-offset-4" to={`/boutique/${shop.slug}`}>Voir ma vitrine publique</Link></div><button className="btn-secondary !min-h-9 !px-3 !py-2" type="button" onClick={() => setShowShopForm((current) => !current)}>{showShopForm ? 'Fermer' : 'Modifier ma boutique'}</button></div>}
     {shop && showShopForm && <form onSubmit={(event) => void updateShop(event)} className="card-surface mt-4 grid gap-4 p-5 sm:grid-cols-2"><h3 className="font-display text-lg font-extrabold sm:col-span-2">Informations de la vitrine</h3><label className="label">Nom de boutique<input className="field" name="name" required maxLength={120} defaultValue={shop.name} /></label><label className="label">Ville<input className="field" name="city" required maxLength={80} defaultValue={shop.city} /></label><label className="label sm:col-span-2">Présentation<textarea className="field min-h-24" name="description" maxLength={2000} defaultValue={shop.description} /></label><label className="label">Logo<input className="field" name="logo" type="file" accept="image/jpeg,image/png,image/webp" /><span className="mt-1 block text-xs font-normal text-faso-muted">JPG, PNG, WebP · 5 Mo maximum.{shop.logo_url ? ' Un nouveau fichier remplacera le logo affiché.' : ''}</span></label><label className="label">Bannière<input className="field" name="cover" type="file" accept="image/jpeg,image/png,image/webp" /><span className="mt-1 block text-xs font-normal text-faso-muted">JPG, PNG, WebP · 5 Mo maximum.{shop.cover_url ? ' Un nouveau fichier remplacera la bannière affichée.' : ''}</span></label><button disabled={busy} className="btn-primary sm:col-span-2">{busy ? 'Enregistrement…' : 'Enregistrer les informations'}</button><p className="text-xs leading-5 text-faso-muted sm:col-span-2">L’adresse de vitrine reste <code>/boutique/{shop.slug}</code>. Les images remplacées restent conservées dans le stockage existant afin de ne pas casser d’anciennes références.</p></form>}
     {shop && businessAccess === 'error' && <p role="alert" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">L’offre Business n’a pas pu être vérifiée ; aucun coût d’achat n’est chargé ou modifié. Le CRUD produit reste disponible.</p>}
@@ -246,6 +308,6 @@ export function MerchantProductsPage() {
       <label className="label sm:col-span-2">Photo du produit<input className="field" name="image" type="file" accept="image/jpeg,image/png,image/webp" /><span className="mt-1 block text-xs font-normal text-faso-muted">JPG, PNG ou WebP · 5 Mo maximum.{editing?.image_url ? ' Une nouvelle photo remplace l’actuelle.' : ''}</span></label>
       <button disabled={busy} className="btn-primary sm:col-span-2">{busy ? 'Enregistrement…' : <><PackagePlus className="h-4 w-4" />{editing ? 'Enregistrer les modifications' : 'Enregistrer le produit'}</>}</button>
     </form>}
-    {shop && !loading && <div className="mt-6">{products.length ? <div className="grid gap-3">{products.map((product) => <article key={product.id} className="flex flex-col gap-4 rounded-2xl border border-faso-line bg-white p-4 sm:flex-row sm:items-center"><div className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-xl bg-faso-ivory text-faso-forest">{product.image_url ? <img src={product.image_url} className="h-full w-full object-cover" alt="" /> : <PackagePlus />}</div><div className="min-w-0 flex-1"><h3 className="font-bold">{product.name}</h3><p className="mt-1 text-xs text-faso-muted">Vente {formatXof(product.price_xof)}{businessAccess === 'allowed' && <> · Achat {product.purchase_cost_xof == null ? 'non renseigné' : formatXof(product.purchase_cost_xof)}</>} · Stock {product.sale_mode === 'made_to_order' ? 'sur commande' : product.stock_quantity}{product.condition ? ` · ${productConditionLabel(product.condition)}` : ''}{product.sale_mode ? ` · ${productModeLabel(product.sale_mode)}${product.sale_mode === 'wholesale' ? ` (min. ${product.minimum_order_quantity ?? 2})` : ''}` : ''}{product.lead_time_days != null ? ` · délai ${product.lead_time_days} j` : ''} · <span className="capitalize">{product.status.replaceAll('_', ' ')}</span></p></div><div className="flex gap-2"><button className="btn-secondary !min-h-9 !px-3 !py-2" title="Modifier le produit" onClick={() => { setEditing(product); setCondition(product.condition ?? null); setSaleMode(product.sale_mode ?? null); setMinimumQuantity(product.minimum_order_quantity ?? (product.sale_mode === 'wholesale' ? 2 : 1)); setLeadTimeDays(product.lead_time_days == null ? '' : String(product.lead_time_days)); setShowForm(true); }}><Pencil className="h-4 w-4" /><span className="sr-only">Modifier</span></button><button onClick={() => void archiveProduct(product.id)} className="btn-secondary !min-h-9 !px-3 !py-2 text-faso-terracotta" aria-label={`Archiver ${product.name}`}><Trash2 className="h-4 w-4" /></button></div></article>)}</div> : <EmptyState title="Votre catalogue est prêt à démarrer"><p>Ajoutez votre premier produit. Il sera en attente de modération avant publication.</p></EmptyState>}</div>}
+    {shop && !loading && !loadError && <div className="mt-6"><label className="mb-4 block max-w-xs text-sm font-semibold text-faso-ink">Filtrer par statut<select className="field mt-1" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}><option value="all">Tous les produits ({products.length})</option><option value="pending_review">À valider</option><option value="active">Publiés</option><option value="rejected">Refusés</option><option value="archived">Archivés</option></select></label>{visibleProducts.length ? <div className="grid gap-3">{visibleProducts.map((product) => <article key={product.id} className="flex flex-col gap-4 rounded-2xl border border-faso-line bg-white p-4 sm:flex-row sm:items-center"><div className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-xl bg-faso-ivory text-faso-forest">{product.image_url ? <img src={product.image_url} className="h-full w-full object-cover" alt="" /> : <PackagePlus />}</div><div className="min-w-0 flex-1"><h3 className="font-bold">{product.name}</h3><p className="mt-1 text-xs text-faso-muted">Vente {formatXof(product.price_xof)}{businessAccess === 'allowed' && <> · Achat {product.purchase_cost_xof == null ? 'non renseigné' : formatXof(product.purchase_cost_xof)}</>} · Stock {product.sale_mode === 'made_to_order' ? 'sur commande' : product.stock_quantity}{product.condition ? ` · ${productConditionLabel(product.condition)}` : ''}{product.sale_mode ? ` · ${productModeLabel(product.sale_mode)}${product.sale_mode === 'wholesale' ? ` (min. ${product.minimum_order_quantity ?? 2})` : ''}` : ''}{product.lead_time_days != null ? ` · délai ${product.lead_time_days} j` : ''} · <span className="capitalize">{product.status.replaceAll('_', ' ')}</span>{product.status === 'rejected' && <span className="ml-2 text-faso-terracotta">À corriger puis à renvoyer à la modération.</span>}</p></div><div className="flex flex-wrap gap-2"><button disabled={busy} className="btn-secondary !min-h-9 !px-3 !py-2 disabled:opacity-60" title="Modifier le produit" onClick={() => { setEditing(product); setCondition(product.condition ?? null); setSaleMode(product.sale_mode ?? null); setMinimumQuantity(product.minimum_order_quantity ?? (product.sale_mode === 'wholesale' ? 2 : 1)); setLeadTimeDays(product.lead_time_days == null ? '' : String(product.lead_time_days)); setShowForm(true); }}><Pencil className="h-4 w-4" /><span className="sr-only">Modifier</span></button>{(product.status === 'rejected' || product.status === 'archived') && <button disabled={busy} onClick={() => void resubmitProduct(product.id)} className="btn-primary !min-h-9 !px-3 !py-2 disabled:opacity-60">Renvoyer à la modération</button>}{product.status !== 'archived' && <button disabled={busy} onClick={() => void archiveProduct(product.id)} className="btn-secondary !min-h-9 !px-3 !py-2 text-faso-terracotta disabled:opacity-60" aria-label={`Archiver ${product.name}`}><Trash2 className="h-4 w-4" />Archiver</button>}</div></article>)}</div> : <EmptyState title={products.length ? 'Aucun produit pour ce statut' : 'Votre catalogue est prêt à démarrer'}><p>{products.length ? 'Essayez un autre statut pour retrouver vos annonces.' : 'Ajoutez votre premier produit. Il sera en attente de modération avant publication.'}</p></EmptyState>}</div>}
   </section>;
 }

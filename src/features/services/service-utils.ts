@@ -24,6 +24,26 @@ export function serviceImageLimitExceeded(existingCount: number, incomingCount: 
   return existingCount < 0 || incomingCount < 0 || existingCount + incomingCount > limit;
 }
 
+export type EditableServiceListing = Pick<
+  import('../../types').ServiceListing,
+  'category_id' | 'title' | 'description' | 'city' | 'service_area' |
+  'price_min_xof' | 'price_max_xof' | 'price_unit' | 'image_urls'
+>;
+
+export function serviceListingContentChanged(current: EditableServiceListing, next: EditableServiceListing): boolean {
+  return current.category_id !== next.category_id
+    || current.title !== next.title
+    || current.description !== next.description
+    || current.city !== next.city
+    || current.price_min_xof !== next.price_min_xof
+    || current.price_max_xof !== next.price_max_xof
+    || current.price_unit !== next.price_unit
+    || current.service_area.length !== next.service_area.length
+    || current.service_area.some((area, index) => area !== next.service_area[index])
+    || current.image_urls.length !== next.image_urls.length
+    || current.image_urls.some((url, index) => url !== next.image_urls[index]);
+}
+
 export function isMissingServicesMigration(message: string): boolean {
   return /service_(categories|provider_profiles|listings|requests|reviews)|column .*service_request|schema cache/i.test(message)
     && /relation|table|schema cache|does not exist|could not find|column/i.test(message);

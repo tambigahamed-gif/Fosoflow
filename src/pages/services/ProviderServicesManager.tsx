@@ -6,7 +6,7 @@ import { useAuth } from '../../app/auth';
 import { EmptyState, SetupNotice } from '../../components/ui/Callout';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import type { ServiceCategory, ServiceListing, ServiceProviderProfile } from '../../types';
-import { isMissingServicesMigration, parseServiceArea, serviceImageLimitExceeded, servicePriceLabel } from '../../features/services/service-utils';
+import { isMissingServicesMigration, parseServiceArea, serviceImageLimitExceeded, serviceListingContentChanged, servicePriceLabel } from '../../features/services/service-utils';
 
 const statusLabels: Record<ServiceListing['status'], string> = { pending_review: 'En attente de modération', active: 'Publié', rejected: 'À corriger', archived: 'Archivé' };
 
@@ -85,6 +85,21 @@ export function ProviderServicesManager() {
     if (selectedFiles.some((file) => !['image/jpeg','image/png','image/webp'].includes(file.type) || file.size > 5 * 1024 * 1024)) { toast.error('Utilisez des images JPG, PNG ou WebP de 5 Mo maximum chacune.'); return; }
     const existingImageCount = editing?.image_urls?.length ?? 0;
     if (serviceImageLimitExceeded(existingImageCount, selectedFiles.length)) { toast.error('Une prestation peut avoir au maximum 8 photos.'); return; }
+    const nextContent = {
+      category_id: String(form.get('category_id') ?? '') || null,
+      title,
+      description: String(form.get('description') ?? '').trim(),
+      city: String(form.get('city') ?? '').trim(),
+      service_area: parseServiceArea(String(form.get('service_area') ?? '')),
+      price_min_xof: min,
+      price_max_xof: max,
+      price_unit: String(form.get('price_unit') ?? '').trim() || null,
+      image_urls: [...(editing?.image_urls ?? [])],
+    };
+    if (editing && !selectedFiles.length && !serviceListingContentChanged(editing, nextContent)) {
+      toast.info('Aucune modification détectée. Le statut de cette prestation n’a pas changé.');
+      return;
+    }
     setBusy(true);
     const imageUrls = [...(editing?.image_urls ?? [])];
     const uploadedPaths: string[] = [];
@@ -112,14 +127,7 @@ export function ProviderServicesManager() {
       }
       const payload = {
         provider_id: user.id,
-        category_id: String(form.get('category_id') ?? '') || null,
-        title,
-        description: String(form.get('description') ?? '').trim(),
-        city: String(form.get('city') ?? '').trim(),
-        service_area: parseServiceArea(String(form.get('service_area') ?? '')),
-        price_min_xof: min,
-        price_max_xof: max,
-        price_unit: String(form.get('price_unit') ?? '').trim() || null,
+        ...nextContent,
         image_urls: imageUrls,
         status: 'pending_review' as const,
       };
@@ -131,7 +139,10 @@ export function ProviderServicesManager() {
         toast.error(`Prestation non enregistrée : ${result.error.message}${cleanupError ? ` Les photos temporaires n’ont pas pu être supprimées : ${cleanupError.message}` : ''}`);
         return;
       }
-      toast.success(editing ? 'Modifications enregistrées. La prestation repasse en modération.' : 'Prestation envoyée en modération.');
+      const stored = result.data as ServiceListing | null;
+      if (!editing) toast.success('Prestation envoyée en modération.');
+      else if (stored?.status === 'pending_review') toast.success('Modifications enregistrées. La prestation repasse en modération.');
+      else toast.success(`Modifications enregistrées. Statut actuel : ${stored?.status ? statusLabels[stored.status] : 'à vérifier'}.`);
       setEditing(null); setShowForm(false); formElement.reset(); await refresh();
     } catch (reason) {
       const cleanupError = await cleanupUploads();
@@ -146,7 +157,7 @@ export function ProviderServicesManager() {
     {migrationMissing && <p role="status" className="mt-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">La migration 015 n’est pas installée dans le schéma connecté. Le formulaire n’envoie aucune donnée prétendument enregistrée.</p>}
     {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-800">{error}</p>}
     {profile && profile.review_status !== 'active' && <p role="status" className="mt-4 rounded-2xl bg-faso-ivory p-4 text-sm leading-6">Votre profil est « {profile.review_status === 'pending_review' ? 'en attente de validation' : profile.review_status === 'rejected' ? 'à corriger' : 'suspendu'} ». Les prestations peuvent être préparées, mais la vitrine publique ne s’active qu’après validation.</p>}
-    {!profile && !loading && !migrationMissing && <p className="mt-5 rounded-2xl bg-faso-ivory p-4 text-sm">Complétez d’abord votre <Link className="font-bold text-faso-forest underline" to="/provider/profile">profil professionnel</Link>.</p>}
+    {!profile && !loading && !migrationMissing && !error && <p className="mt-5 rounded-2xl bg-faso-ivory p-4 text-sm">Complétez d’abord votre <Link className="font-bold text-faso-forest underline" to="/provider/profile">profil professionnel</Link>.</p>}
     {showForm && !migrationMissing && profile && <form onSubmit={(event) => void save(event)} className="card-surface mt-5 grid gap-4 p-5 sm:grid-cols-2">
       <h3 className="font-display text-lg font-extrabold sm:col-span-2">{editing ? `Modifier ${editing.title}` : 'Nouvelle prestation'}</h3>
       <label className="label">Titre<input className="field mt-1" name="title" required minLength={3} maxLength={160} defaultValue={editing?.title ?? ''} /></label>
@@ -160,6 +171,6 @@ export function ProviderServicesManager() {
       <label className="label sm:col-span-2">Photos<input className="field mt-1" type="file" name="images" accept="image/jpeg,image/png,image/webp" multiple /><span className="mt-1 flex items-center gap-1 text-xs font-normal text-faso-muted"><ImagePlus className="h-3.5 w-3.5" />JPG, PNG ou WebP · 5 Mo maximum par photo · 8 photos au total.{editing?.image_urls?.length ? ` ${editing.image_urls.length} photo(s) existante(s) conservée(s).` : ''}</span></label>
       <button disabled={busy} className="btn-primary sm:col-span-2">{busy ? 'Envoi…' : editing ? 'Enregistrer et renvoyer en modération' : 'Envoyer en modération'}</button>
     </form>}
-    {loading ? <div className="mt-6 h-40 animate-pulse rounded-3xl bg-white" /> : !migrationMissing && <div className="mt-6 grid gap-3">{services.length ? services.map((service) => <article key={service.id} className="flex flex-col gap-4 rounded-2xl border border-faso-line bg-white p-4 sm:flex-row sm:items-center"><div className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-xl bg-faso-ivory text-faso-forest">{service.image_urls?.[0] ? <img src={service.image_urls[0]} alt="" loading="lazy" className="h-full w-full object-cover" /> : <PackagePlus />}</div><div className="min-w-0 flex-1"><h3 className="font-bold">{service.title}</h3><p className="mt-1 text-xs text-faso-muted">{servicePriceLabel(service.price_min_xof, service.price_max_xof, service.price_unit)} · {service.city || profile?.city || 'Zone non renseignée'} · {statusLabels[service.status]}</p></div><button className="btn-secondary !min-h-9 !px-3 !py-2" onClick={() => { setEditing(service); setShowForm(true); }} aria-label={`Modifier ${service.title}`}><Pencil className="h-4 w-4" />Modifier</button></article>) : <EmptyState title="Votre catalogue attend sa première prestation"><p>Créez une fiche claire avec vos tarifs indicatifs ou laissez le tarif sur devis.</p></EmptyState>}</div>}
+    {loading ? <div className="mt-6 h-40 animate-pulse rounded-3xl bg-white" /> : migrationMissing ? null : error ? <button type="button" className="mt-4 font-bold underline" onClick={() => void refresh()}>Réessayer le chargement</button> : <div className="mt-6 grid gap-3">{services.length ? services.map((service) => <article key={service.id} className="flex flex-col gap-4 rounded-2xl border border-faso-line bg-white p-4 sm:flex-row sm:items-center"><div className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-xl bg-faso-ivory text-faso-forest">{service.image_urls?.[0] ? <img src={service.image_urls[0]} alt="" loading="lazy" className="h-full w-full object-cover" /> : <PackagePlus />}</div><div className="min-w-0 flex-1"><h3 className="font-bold">{service.title}</h3><p className="mt-1 text-xs text-faso-muted">{servicePriceLabel(service.price_min_xof, service.price_max_xof, service.price_unit)} · {service.city || profile?.city || 'Zone non renseignée'} · {statusLabels[service.status]}</p></div><button className="btn-secondary !min-h-9 !px-3 !py-2" onClick={() => { setEditing(service); setShowForm(true); }} aria-label={`Modifier ${service.title}`}><Pencil className="h-4 w-4" />Modifier</button></article>) : <EmptyState title="Votre catalogue attend sa première prestation"><p>Créez une fiche claire avec vos tarifs indicatifs ou laissez le tarif sur devis.</p></EmptyState>}</div>}
   </section>;
 }

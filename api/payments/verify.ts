@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { z } from 'zod';
 import { authenticate, methodNotAllowed, parseBody, sendJson } from '../_lib/server';
 import { classifySasPayStatus } from './status-parser';
+import { verifySasPayTransaction } from './transaction-parser';
 
 const inputSchema = z.object({ sessionId: z.string().uuid() }).strict();
 const API_BASE = 'https://api.saspay.me/api/v1';
@@ -41,11 +42,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const transactionStatus = typeof result.transaction_status === 'string' ? result.transaction_status.toUpperCase() : '';
   const transactionId = typeof result.transaction_id === 'string' && result.transaction_id.length <= 120 ? result.transaction_id : null;
   const transactionReference = typeof result.transaction_reference === 'string' && result.transaction_reference.length <= 160 ? result.transaction_reference : null;
+  let verifiedTransaction: Record<string, unknown> | null = null;
+  if (verification === 'paid') {
+    if (!transactionId) return sendJson(res, 502, { status: 'pending', message: 'SasPay indique un paiement, mais ne fournit pas de référence de transaction vérifiable. Aucun abonnement n’a été activé.' });
+    try {
+      const transactionResponse = await fetch(`${API_BASE}/transactions/${encodeURIComponent(transactionId)}/`, {
+        headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(7_000),
+      });
+      verifiedTransaction = await transactionResponse.json().catch(() => null) as Record<string, unknown> | null;
+      if (!transactionResponse.ok) verifiedTransaction = null;
+    } catch {
+      verifiedTransaction = null;
+    }
+    if (!verifiedTransaction || verifySasPayTransaction(verifiedTransaction, {
+      paymentId: payment.id,
+      transactionId,
+      amountXof: Number(payment.amount_xof),
+      currency: payment.currency,
+    }) !== 'valid') {
+      return sendJson(res, 503, { status: 'pending', message: 'Le détail SasPay ne confirme pas exactement le montant, la devise et la référence de ce paiement. Aucun abonnement n’a été activé.' });
+    }
+  }
   if (transactionId || transactionReference) {
     const { error: linkError } = await admin.from('payments').update({
       ...(transactionId ? { provider_transaction_id: transactionId } : {}),
       ...(transactionReference ? { provider_reference: transactionReference } : {}),
-      provider_data: { status, transaction_status: transactionStatus, transaction_id: transactionId, transaction_reference: transactionReference },
+      provider_data: { status, transaction_status: transactionStatus, transaction_id: transactionId, transaction_reference: transactionReference, ...(verifiedTransaction ? { verified_transaction: { status: verifiedTransaction.status, flow_direction: verifiedTransaction.flow_direction, currency: verifiedTransaction.currency, requested_amount: verifiedTransaction.requested_amount, verified_by: 'saspay_api' } } : {}) },
     }).eq('id', payment.id).in('status', ['pending', 'creating']);
     if (linkError) {
       console.error('SasPay transaction reference could not be stored', { paymentId: payment.id, code: linkError.code });
@@ -53,7 +75,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
   if (verification === 'paid') {
-    const { error: activationError } = await admin.rpc('mark_payment_paid', { p_payment_id: payment.id, p_provider_data: { status, transaction_status: transactionStatus, transaction_id: transactionId, transaction_reference: transactionReference } });
+    const { error: activationError } = await admin.rpc('mark_payment_paid', { p_payment_id: payment.id, p_provider_data: { status, transaction_status: transactionStatus, transaction_id: transactionId, transaction_reference: transactionReference, verified_transaction: { status: verifiedTransaction?.status, flow_direction: verifiedTransaction?.flow_direction, currency: verifiedTransaction?.currency, requested_amount: verifiedTransaction?.requested_amount, verified_by: 'saspay_api' } } });
     if (activationError) {
       console.error('SasPay payment confirmation requires review', { paymentId: payment.id, providerSessionId: payment.provider_session_id, error: activationError.message });
       return sendJson(res, 503, { status: 'pending', message: 'SasPay confirme le paiement, mais l’activation est en attente de synchronisation.' });
